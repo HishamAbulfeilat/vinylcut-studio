@@ -103,7 +103,7 @@ export default function MenuBar({
     {
       label: 'Tools',
       items: [
-        { label: 'Vectorize (Trace)' },
+        { label: 'Vectorize (Trace)', action: () => window.dispatchEvent(new CustomEvent('openDialog', { detail: 'vectorize' })) },
         { label: 'Contour Cut Wizard' },
         { label: 'Vinyl Spooler', shortcut: 'Shift+Alt+V' },
         { type: 'separator' },

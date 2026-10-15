@@ -18,6 +18,7 @@ import MasterPages from './components/MasterPages'
 import ExportDialog from './components/ExportDialog'
 import FontManager from './components/FontManager'
 import ColorLibrary from './components/ColorLibrary'
+import VectorizeDialog from './components/VectorizeDialog'
 import { AppProvider, useApp } from './context/AppContext'
 import './App.css'
 
@@ -91,7 +92,8 @@ const tools = [
 
 function AppContent() {
   const [dialog, setDialog] = useState(null)
-  const { state, dispatch } = useApp()
+  const [toast, setToast] = useState(null)
+  const { state, dispatch, actions } = useApp()
   const canvasRef = useRef(null)
 
   const handleNewDocument = useCallback(() => {
@@ -100,18 +102,11 @@ function AppContent() {
   }, [dispatch])
 
   const handleOpenFile = useCallback(() => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.svg,.png,.jpg,.jpeg,.bmp,.pdf,.ai,.eps,.dxf,.plt,.hpgl'
-    input.onchange = (e) => {
-      const file = e.target.files[0]
-      if (file) dispatch({ type: 'LOAD_FILE', payload: { file } })
-    }
-    input.click()
-  }, [dispatch])
+    actions.openImportPicker()
+  }, [actions])
 
-  const handleSave = useCallback(() => dispatch({ type: 'SAVE_DOCUMENT' }), [dispatch])
-  const handleExport = useCallback(() => dispatch({ type: 'EXPORT_DOCUMENT' }), [dispatch])
+  const handleSave = useCallback(() => actions.saveDocument(), [actions])
+  const handleExport = useCallback(() => setDialog({ type: 'export' }), [])
   const handlePrint = useCallback(() => window.print(), [])
   const handleCut = useCallback(() => dispatch({ type: 'CUT_SELECTED' }), [dispatch])
   const handleCopy = useCallback(() => dispatch({ type: 'COPY_SELECTED' }), [dispatch])
@@ -143,6 +138,21 @@ function AppContent() {
     window.addEventListener('openDialog', handler)
     return () => window.removeEventListener('openDialog', handler)
   }, [])
+
+  React.useEffect(() => {
+    const handler = (e) => {
+      const detail = (e && e.detail) || {}
+      setToast({ message: detail.message || '', kind: detail.kind || 'info', id: Date.now() })
+    }
+    window.addEventListener('vcs-notify', handler)
+    return () => window.removeEventListener('vcs-notify', handler)
+  }, [])
+
+  React.useEffect(() => {
+    if (!toast) return undefined
+    const t = setTimeout(() => setToast(null), 4200)
+    return () => clearTimeout(t)
+  }, [toast])
 
   return (
     <div className="app-container">
@@ -193,15 +203,21 @@ function AppContent() {
       {dialog?.type === 'spooler' && <VinylSpooler onClose={() => setDialog(null)} />}
       {dialog?.type === 'contour' && <ContourCutWizard onClose={() => setDialog(null)} />}
       {dialog?.type === 'align' && <AlignmentDialog onClose={() => setDialog(null)} />}
-      {dialog?.type === 'gradient' && <GradientEditor onClose={() => setDialog(null)} onApply={(g) => dispatch({ type: 'SET_FILL', payload: { type: 'gradient', color: g.stops[0]?.color } })} />}
-      {dialog?.type === 'texture' && <TextureLibrary onClose={() => setDialog(null)} onSelect={(t) => dispatch({ type: 'SET_FILL', payload: { type: 'texture', color: t.color } })} />}
+      {dialog?.type === 'gradient' && <GradientEditor onClose={() => setDialog(null)} onApply={(g) => { dispatch({ type: 'SET_FILL', payload: { type: 'gradient', stops: g.stops, angle: g.angle == null ? 90 : g.angle } }); setDialog(null) }} />}
+      {dialog?.type === 'texture' && <TextureLibrary onClose={() => setDialog(null)} onSelect={(t) => { dispatch({ type: 'SET_FILL', payload: { type: 'texture', color: t.color, pattern: t.pattern, size: t.size || 8, lineColor: t.lineColor || '#666666' } }); setDialog(null) }} />}
       {dialog?.type === 'stepRepeat' && <StepRepeatDialog onClose={() => setDialog(null)} onApply={() => dispatch({ type: 'APPLY_STEP_REPEAT' })} />}
       {dialog?.type === 'shapeOps' && <ShapeOperations onClose={() => setDialog(null)} />}
       {dialog?.type === 'masterPages' && <MasterPages onClose={() => setDialog(null)} />}
       {dialog?.type === 'export' && <ExportDialog onClose={() => setDialog(null)} />}
       {dialog?.type === 'fontManager' && <FontManager onClose={() => setDialog(null)} />}
-      {dialog?.type === 'colorLibrary' && <ColorLibrary onClose={() => setDialog(null)} onSelect={(color) => dispatch({ type: 'SET_FILL', payload: { color } })} />}
-      {dialog && !['spooler', 'contour', 'align', 'gradient', 'texture', 'stepRepeat', 'shapeOps', 'masterPages', 'export', 'fontManager', 'colorLibrary'].includes(dialog.type) && (
+      {dialog?.type === 'colorLibrary' && <ColorLibrary onClose={() => setDialog(null)} onSelect={(color) => { dispatch({ type: 'SET_FILL', payload: { type: 'solid', color } }); setDialog(null) }} />}
+      {dialog?.type === 'vectorize' && <VectorizeDialog selectedObject={state.selectedObject} onClose={() => setDialog(null)} />}
+      {toast && (
+        <div className={`vcs-toast vcs-toast-${toast.kind}`} onClick={() => setToast(null)}>
+          {toast.message}
+        </div>
+      )}
+      {dialog && !['spooler', 'contour', 'align', 'gradient', 'texture', 'stepRepeat', 'shapeOps', 'masterPages', 'export', 'fontManager', 'colorLibrary', 'vectorize'].includes(dialog.type) && (
         <Dialog
           type={dialog.type}
           title={dialog.title}

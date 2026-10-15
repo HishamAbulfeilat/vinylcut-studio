@@ -3,12 +3,8 @@ import { useApp } from '../context/AppContext'
 import './VinylSpooler.css'
 
 export default function VinylSpooler({ onClose }) {
-  const { state } = useApp()
-  const [jobs, setJobs] = useState([
-    { id: 1, name: 'Sign_001.svg', status: 'ready', progress: 0, material: 'Glossy Black', size: '300x200mm' },
-    { id: 2, name: 'Logo_White.svg', status: 'cutting', progress: 65, material: 'Matte White', size: '150x150mm' },
-    { id: 3, name: 'Banner_Text.svg', status: 'complete', progress: 100, material: 'Reflective Red', size: '600x300mm' },
-  ])
+  const { state, actions } = useApp()
+  const [jobs, setJobs] = useState([])
   const [selectedJob, setSelectedJob] = useState(null)
   const [settings, setSettings] = useState({
     speed: 50,
@@ -21,23 +17,42 @@ export default function VinylSpooler({ onClose }) {
   })
 
   const addJob = () => {
+    const page = state.pages[state.activePage] || { width: 210, height: 297 }
+    const paths = state.objects.length
+    if (!paths) {
+      actions.notify('Nothing to cut - the page is empty', 'warn')
+      return
+    }
     const newJob = {
       id: Date.now(),
-      name: `Design_${state.documentName}`,
+      name: (state.documentName || 'Untitled-1').replace(/\.[^.]*$/, ''),
       status: 'ready',
       progress: 0,
-      material: 'Glossy Black',
-      size: `${state.pages[state.activePage]?.width || 210}x${state.pages[state.activePage]?.height || 297}mm`,
+      paths,
+      material: settings.mediaSupplies === 'roll' ? 'Roll vinyl' : 'Sheet vinyl',
+      size: `${Math.round(page.width)}x${Math.round(page.height)}mm`,
     }
-    setJobs([...jobs, newJob])
+    setJobs(list => [...list, newJob])
+    setSelectedJob(newJob.id)
   }
 
-  const startCut = (jobId) => {
-    setJobs(jobs.map(j => j.id === jobId ? { ...j, status: 'cutting', progress: 0 } : j))
+  // Real output: stream HPGL to the cutter over WebSerial when the browser
+  // supports it, otherwise save a .plt file the cutter software can load.
+  const startCut = async (jobId) => {
+    setJobs(list => list.map(j => (j.id === jobId ? { ...j, status: 'cutting', progress: 0 } : j)))
+    const result = await actions.sendToCutter({
+      speed: Math.round(settings.speed / 5),
+      force: Math.round(settings.force / 10),
+      baudRate: 9600,
+    })
+    if (!result) {
+      setJobs(list => list.map(j => (j.id === jobId ? { ...j, status: 'stopped', progress: 0 } : j)))
+      return
+    }
     const interval = setInterval(() => {
       setJobs(prev => prev.map(j => {
         if (j.id === jobId && j.status === 'cutting') {
-          const newProgress = j.progress + 5
+          const newProgress = j.progress + 10
           if (newProgress >= 100) {
             clearInterval(interval)
             return { ...j, status: 'complete', progress: 100 }
@@ -46,7 +61,7 @@ export default function VinylSpooler({ onClose }) {
         }
         return j
       }))
-    }, 500)
+    }, 250)
   }
 
   const pauseJob = (jobId) => {

@@ -1,7 +1,89 @@
 import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { useApp } from '../context/AppContext'
+import { parsePathData } from '../lib/geometry'
 import CropMarks from './CropMarks'
 import './Canvas.css'
+
+/* Real gradient / texture / spot fills, shared by DOM and SVG shapes. */
+
+function gradientStops(fill) {
+  if (fill.stops && fill.stops.length) return fill.stops
+  return [
+    { offset: 0, color: fill.color || '#000000' },
+    { offset: 1, color: fill.color2 || '#ffffff' },
+  ]
+}
+
+function fillToCss(fill) {
+  if (!fill || fill.type === 'none') return 'transparent'
+  if (fill.type === 'solid') return fill.color || '#000000'
+  if (fill.type === 'spot') return fill.spotColor || '#ff0000'
+  if (fill.type === 'gradient') {
+    const list = gradientStops(fill)
+      .map(s => `${s.color} ${Math.round((s.offset || 0) * 100)}%`)
+      .join(', ')
+    return `linear-gradient(${fill.angle == null ? 90 : fill.angle}deg, ${list})`
+  }
+  if (fill.type === 'texture') {
+    const c = fill.color || '#cccccc'
+    const lc = fill.lineColor || '#666666'
+    const s = fill.size || 8
+    return `repeating-linear-gradient(45deg, ${lc} 0 1px, transparent 1px ${s}px), repeating-linear-gradient(-45deg, ${c} 0 ${s}px, ${lc} ${s}px ${s + 1}px)`
+  }
+  if (fill.type === 'logo') return 'repeating-conic-gradient(#bbbbbb 0 25%, #dddddd 0 50%)'
+  if (fill.type === 'mask' || fill.type === 'parent') return 'rgba(130,130,130,0.35)'
+  return 'transparent'
+}
+
+function svgFill(fill, id) {
+  if (!fill || fill.type === 'none') return { fill: 'none', defs: null }
+  if (fill.type === 'solid') return { fill: fill.color || '#000000', defs: null }
+  if (fill.type === 'spot') return { fill: fill.spotColor || '#ff0000', defs: null }
+  if (fill.type === 'mask' || fill.type === 'parent') return { fill: 'rgba(130,130,130,0.35)', defs: null }
+
+  if (fill.type === 'gradient') {
+    const rad = ((fill.angle == null ? 90 : fill.angle) * Math.PI) / 180
+    const x1 = 0.5 - Math.cos(rad) / 2
+    const y1 = 0.5 - Math.sin(rad) / 2
+    const x2 = 0.5 + Math.cos(rad) / 2
+    const y2 = 0.5 + Math.sin(rad) / 2
+    return {
+      fill: `url(#${id})`,
+      defs: (
+        <linearGradient id={id} x1={x1} y1={y1} x2={x2} y2={y2}>
+          {gradientStops(fill).map((s, i) => (
+            <stop key={i} offset={`${Math.round((s.offset || 0) * 100)}%`} stopColor={s.color} />
+          ))}
+        </linearGradient>
+      ),
+    }
+  }
+  if (fill.type === 'texture') {
+    const s = fill.size || 8
+    return {
+      fill: `url(#${id})`,
+      defs: (
+        <pattern id={id} width={s} height={s} patternUnits="userSpaceOnUse">
+          <rect width={s} height={s} fill={fill.color || '#cccccc'} opacity="0.35" />
+          <path d={`M0,${s} L${s},0`} stroke={fill.lineColor || '#666666'} strokeWidth="1" />
+          <path d={`M0,0 L${s},${s}`} stroke={fill.lineColor || '#666666'} strokeWidth="0.6" opacity="0.6" />
+        </pattern>
+      ),
+    }
+  }
+  if (fill.type === 'logo') {
+    return {
+      fill: `url(#${id})`,
+      defs: (
+        <pattern id={id} width="16" height="16" patternUnits="userSpaceOnUse">
+          <rect width="16" height="16" fill="#dddddd" />
+          <circle cx="8" cy="8" r="5" fill="#999999" />
+        </pattern>
+      ),
+    }
+  }
+  return { fill: 'none', defs: null }
+}
 
 const Canvas = forwardRef((props, ref) => {
   const { state, dispatch, actions } = useApp()
@@ -19,6 +101,30 @@ const Canvas = forwardRef((props, ref) => {
   const [isMarquee, setIsMarquee] = useState(false)
   const [marqueeStart, setMarqueeStart] = useState({ x: 0, y: 0 })
   const [marqueeEnd, setMarqueeEnd] = useState({ x: 0, y: 0 })
+  // Tool-specific drags
+  const [isKnifing, setIsKnifing] = useState(false)
+  const [knifeStart, setKnifeStart] = useState({ x: 0, y: 0 })
+  const [knifeEnd, setKnifeEnd] = useState({ x: 0, y: 0 })
+  const [isContouring, setIsContouring] = useState(false)
+  const [contourStart, setContourStart] = useState({ x: 0, y: 0 })
+  const [contourEnd, setContourEnd] = useState({ x: 0, y: 0 })
+  const [isErasing, setIsErasing] = useState(false)
+  const eraseIds = useRef([])
+
+  const objectAt = useCallback((coords) => (
+    [...state.objects].reverse().find(o =>
+      coords.x >= (o.x || 0) && coords.x <= (o.x || 0) + (o.width || 0) &&
+      coords.y >= (o.y || 0) && coords.y <= (o.y || 0) + (o.height || 0))
+  ), [state.objects])
+
+  // Eraser: delete whatever the cursor is over, once per object.
+  const eraseAt = useCallback((coords) => {
+    const hit = objectAt(coords)
+    if (hit && !eraseIds.current.includes(hit.id)) {
+      eraseIds.current = [...eraseIds.current, hit.id]
+      dispatch({ type: 'DELETE_OBJECTS', payload: { ids: [hit.id] } })
+    }
+  }, [objectAt, dispatch])
 
   const getCanvasCoords = useCallback((e) => {
     const canvas = canvasRef.current
@@ -84,13 +190,90 @@ const Canvas = forwardRef((props, ref) => {
       return
     }
 
-    const drawableTools = ['rect', 'ellipse', 'polygon', 'star', 'spiral', 'arrow', 'chaos', 'line', 'curve', 'freehand', 'pen', 'text', 'textArc', 'textPath', 'textVert', 'textBox', 'paragraph', 'image', 'clone', 'cloneArray', 'cloneCircle', 'dimension', 'contour']
+    const drawableTools = ['rect', 'ellipse', 'polygon', 'star', 'spiral', 'arrow', 'chaos', 'line', 'curve', 'freehand', 'pen', 'text', 'textArc', 'textPath', 'textVert', 'textBox', 'paragraph', 'dimension']
+
+    // --- Knife: drag a cutting line ----------------------------------
+    if (state.activeTool === 'knife') {
+      setIsKnifing(true)
+      setKnifeStart(coords)
+      setKnifeEnd(coords)
+      return
+    }
+
+    // --- Contour / offset: drag outward or inward ---------------------
+    if (state.activeTool === 'contour') {
+      const obj = objectAt(coords) || state.selectedObject
+      if (obj) {
+        actions.setSelection([obj.id])
+        setIsContouring(true)
+        setContourStart(coords)
+        setContourEnd(coords)
+      }
+      return
+    }
+
+    // --- Eraser -------------------------------------------------------
+    if (state.activeTool === 'eraser') {
+      setIsErasing(true)
+      eraseIds.current = []
+      eraseAt(coords)
+      return
+    }
+
+    // --- Bucket fill --------------------------------------------------
+    if (state.activeTool === 'fill') {
+      const obj = objectAt(coords)
+      if (obj) actions.updateObject(obj.id, { fill: { ...state.currentFill } })
+      return
+    }
+
+    // --- Zoom tool ----------------------------------------------------
+    if (state.activeTool === 'zoom') {
+      const factor = e.altKey ? 0.8 : 1.25
+      actions.setZoom(Math.max(0.05, Math.min(20, state.zoom * factor)))
+      return
+    }
+
+    // --- Click-to-apply tools (clone / warp / effects) ----------------
+    if (['clone', 'cloneArray', 'cloneCircle', 'warpCircle', 'warpFlag', 'warpWave', 'outline', 'shadow', 'glow', '3d'].includes(state.activeTool)) {
+      const obj = objectAt(coords)
+      if (!obj) return
+      actions.setSelection([obj.id])
+      if (state.activeTool.startsWith('clone')) {
+        const kind = state.activeTool === 'clone' ? 'single' : state.activeTool === 'cloneArray' ? 'array' : 'circle'
+        dispatch({ type: 'SET_CLONE_SETTINGS', payload: { type: kind } })
+        dispatch({ type: 'APPLY_CLONE' })
+      } else if (state.activeTool.startsWith('warp')) {
+        const type = state.activeTool.replace('warp', '').toLowerCase()
+        dispatch({ type: 'SET_WARP_SETTINGS', payload: { type } })
+        dispatch({ type: 'APPLY_WARP' })
+      } else {
+        const effect = { outline: 'outline', shadow: 'dropShadow', glow: 'glow', '3d': 'threeD' }[state.activeTool]
+        dispatch({ type: 'APPLY_EFFECT', payload: { type: effect } })
+      }
+      return
+    }
+
+    // --- Image: import a real bitmap on click -------------------------
+    if (state.activeTool === 'image') {
+      actions.openImportPicker()
+      return
+    }
+
+    // --- Vectorize: open the tracing dialog ---------------------------
+    if (state.activeTool === 'trace') {
+      const obj = objectAt(coords)
+      if (obj && obj.type === 'image') actions.setSelection([obj.id])
+      window.dispatchEvent(new CustomEvent('openDialog', { detail: 'vectorize' }))
+      return
+    }
+
     if (drawableTools.includes(state.activeTool)) {
       setIsDrawing(true)
       setDrawStart(coords)
       setCurrentPos(coords)
     }
-  }, [state.activeTool, state.objects, state.zoom, state.panX, state.panY, state.selectedObjects, getCanvasCoords, actions, dispatch])
+  }, [state.activeTool, state.objects, state.zoom, state.panX, state.panY, state.selectedObject, state.selectedObjects, state.currentFill, getCanvasCoords, actions, dispatch, objectAt, eraseAt])
 
   const handleMouseMove = useCallback((e) => {
     const coords = getCanvasCoords(e)
@@ -98,6 +281,12 @@ const Canvas = forwardRef((props, ref) => {
 
     if (isPanning) return
     if (isMarquee) { setMarqueeEnd(coords); return }
+    if (isKnifing) { setKnifeEnd(coords); return }
+    if (isContouring) { setContourEnd(coords); return }
+    if (isErasing) {
+      eraseAt(coords)
+      return
+    }
     if (isDragging && Object.keys(dragObjStart).length) {
       const dx = coords.x - dragStart.x
       const dy = coords.y - dragStart.y
@@ -107,10 +296,37 @@ const Canvas = forwardRef((props, ref) => {
       return
     }
     if (isDrawing) setCurrentPos(coords)
-  }, [isPanning, isDrawing, isDragging, dragStart, dragObjStart, state.selectedObject, getCanvasCoords, actions, dispatch])
+  }, [isPanning, isDrawing, isDragging, isKnifing, isContouring, isErasing, dragStart, dragObjStart, state.selectedObject, getCanvasCoords, actions, dispatch, eraseAt])
 
   const handleMouseUp = useCallback((e) => {
     if (isPanning) { setIsPanning(false); return }
+    if (isKnifing) {
+      setIsKnifing(false)
+      const coords = getCanvasCoords(e)
+      const len = Math.hypot(coords.x - knifeStart.x, coords.y - knifeStart.y)
+      if (len > 3) {
+        actions.applyKnife({ x1: knifeStart.x, y1: knifeStart.y, x2: coords.x, y2: coords.y })
+      }
+      return
+    }
+    if (isContouring) {
+      setIsContouring(false)
+      const coords = getCanvasCoords(e)
+      const obj = state.selectedObject
+      if (obj) {
+        const cx = (obj.x || 0) + (obj.width || 0) / 2
+        const cy = (obj.y || 0) + (obj.height || 0) / 2
+        let ox = contourStart.x - cx
+        let oy = contourStart.y - cy
+        const ol = Math.hypot(ox, oy) || 1
+        ox /= ol
+        oy /= ol
+        const delta = (coords.x - contourStart.x) * ox + (coords.y - contourStart.y) * oy
+        if (Math.abs(delta) > 0.5) actions.applyContour({ delta, count: 1 })
+      }
+      return
+    }
+    if (isErasing) { setIsErasing(false); eraseIds.current = []; return }
     if (isMarquee) {
       setIsMarquee(false)
       const coords = getCanvasCoords(e)
@@ -177,7 +393,7 @@ const Canvas = forwardRef((props, ref) => {
       }
       setIsDrawing(false)
     }
-  }, [isDrawing, isDragging, isPanning, drawStart, state.activeTool, state.currentFill, state.currentStroke, state.textSettings, getCanvasCoords, actions])
+  }, [isDrawing, isDragging, isPanning, isKnifing, isContouring, isErasing, knifeStart, contourStart, marqueeStart, state.activeTool, state.objects, state.selectedObjects, state.currentFill, state.currentStroke, state.textSettings, state.selectedObject, getCanvasCoords, actions, dispatch])
 
   const handleWheel = useCallback((e) => {
     e.preventDefault()
@@ -214,11 +430,9 @@ const Canvas = forwardRef((props, ref) => {
     const width = obj.width * scale
     const height = obj.height * scale
 
-    const fillColor = obj.fill?.type === 'solid' ? obj.fill.color
-      : obj.fill?.type === 'gradient' ? `linear-gradient(135deg, ${obj.fill.color}, ${obj.fill.color2 || (obj.fill.color || '#000') + '88'})`
-      : obj.fill?.type === 'spot' ? ((obj.fill.spotColor || '#ff0000') + '66')
-      : obj.fill?.type === 'logo' ? 'repeating-conic-gradient(#999 0 25%, #ddd 0 50%)'
-      : 'transparent'
+    const fillColor = fillToCss(obj.fill)
+    const fillId = `cv-fill-${String(obj.id || '').replace(/[^a-zA-Z0-9]/g, '')}`
+    const svgF = svgFill(obj.fill, fillId)
 
     const strokeStr = obj.stroke?.width > 0 ? `${obj.stroke.width}px ${obj.stroke.style || 'solid'} ${obj.stroke.color}` : 'none'
 
@@ -245,12 +459,13 @@ const Canvas = forwardRef((props, ref) => {
         const pts = obj.points || 5
         return (
           <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }}>
+            <defs>{svgF.defs}</defs>
             <polygon
               points={Array.from({ length: pts }, (_, i) => {
                 const angle = (i / pts) * Math.PI * 2 - Math.PI / 2
                 return `${50 + Math.cos(angle) * 50},${50 + Math.sin(angle) * 50}`
               }).join(' ')}
-              fill={fillColor}
+              fill={svgF.fill}
               stroke={obj.stroke?.width > 0 ? obj.stroke.color : 'none'}
               strokeWidth={obj.stroke?.width || 0}
             />
@@ -264,13 +479,14 @@ const Canvas = forwardRef((props, ref) => {
         const innerR = obj.innerRadius || 50
         return (
           <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }}>
+            <defs>{svgF.defs}</defs>
             <polygon
               points={Array.from({ length: starPts * 2 }, (_, i) => {
                 const angle = (i / (starPts * 2)) * Math.PI * 2 - Math.PI / 2
                 const r = i % 2 === 0 ? 50 : innerR
                 return `${50 + Math.cos(angle) * r},${50 + Math.sin(angle) * r}`
               }).join(' ')}
-              fill={fillColor}
+              fill={svgF.fill}
               stroke={obj.stroke?.width > 0 ? obj.stroke.color : 'none'}
               strokeWidth={obj.stroke?.width || 0}
             />
@@ -341,9 +557,10 @@ const Canvas = forwardRef((props, ref) => {
       case 'chaos':
         return (
           <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }}>
+            <defs>{svgF.defs}</defs>
             <path
               d={`M${50 + (obj.seed || 0.5) * 30},${50 - (obj.seed || 0.5) * 30} L${50 - 40},${50 + (obj.seed || 0.5) * 20} L${50 + (obj.seed || 0.5) * 20},${50 + 40} Z`}
-              fill={fillColor}
+              fill={svgF.fill}
               stroke={obj.stroke?.width > 0 ? obj.stroke.color : 'none'}
               strokeWidth={obj.stroke?.width || 0}
             />
@@ -462,10 +679,29 @@ const Canvas = forwardRef((props, ref) => {
       }
 
       case 'image':
+        if (obj.src) {
+          return (
+            <img
+              src={obj.src}
+              alt={obj.name || 'imported'}
+              draggable={false}
+              style={{
+                position: 'absolute',
+                left, top, width, height,
+                transform: `rotate(${obj.rotation || 0}deg)`,
+                opacity: (obj.opacity || 100) / 100,
+                objectFit: obj.preserveAspectRatio === 'meet' ? 'contain' : 'fill',
+                pointerEvents: 'none',
+                userSelect: 'none',
+              }}
+            />
+          )
+        }
         return (
           <div style={{ ...baseStyle, background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontSize: 24 }}>🖼</span>
-            {obj.isVectorized && <span style={{ position: 'absolute', top: 2, right: 2, fontSize: 10, color: '#00aaff' }}>◎</span>}
+            <span style={{ fontSize: 12, color: '#888', padding: 4, textAlign: 'center' }}>
+              Drop an image here<br />(File &gt; Import)
+            </span>
           </div>
         )
 
@@ -497,12 +733,14 @@ const Canvas = forwardRef((props, ref) => {
             <svg
               width={width}
               height={height}
-              viewBox={`0 0 ${obj.width} ${obj.height}`}
+              viewBox={`0 0 ${obj.pathWidth || obj.width} ${obj.pathHeight || obj.height}`}
               preserveAspectRatio="none"
             >
+              <defs>{svgF.defs}</defs>
               <path
                 d={obj.pathData}
-                fill={fillColor}
+                fill={svgF.fill}
+                fillRule="evenodd"
                 stroke={obj.stroke?.width > 0 ? obj.stroke.color : 'none'}
                 strokeWidth={obj.stroke?.width || 0}
                 strokeLinejoin="round"
@@ -774,6 +1012,64 @@ const Canvas = forwardRef((props, ref) => {
     const width = obj.width * scale
     const height = obj.height * scale
 
+    // Real node editing: for vector paths, drag the actual vertices.
+    if (obj.type === 'path' && obj.pathData) {
+      const sx = (obj.pathWidth || obj.width) / (obj.width || 1)
+      const sy = (obj.pathHeight || obj.height) / (obj.height || 1)
+      const closed = /z/i.test(obj.pathData)
+      const subpaths = parsePathData(obj.pathData)
+      const pts = []
+      subpaths.forEach((sp, si) => sp.forEach(([px, py], pi) => {
+        pts.push({ si, pi, gx: obj.x + px / sx, gy: obj.y + py / sy })
+      }))
+
+      return (
+        <div className="node-edit-overlay">
+          {pts.map(pt => (
+            <div
+              key={`${pt.si}-${pt.pi}`}
+              className="node-handle node-point"
+              title="Drag to move this node"
+              style={{
+                left: pt.gx * scale + state.panX * scale - 3,
+                top: pt.gy * scale + state.panY * scale - 3,
+                width: 7,
+                height: 7,
+                borderRadius: 0,
+                background: '#ffd166',
+                border: '1px solid #7a5c00',
+                pointerEvents: 'auto',
+              }}
+              onMouseDown={(e) => {
+                e.stopPropagation()
+                const startX = e.clientX
+                const startY = e.clientY
+                const origD = obj.pathData
+                const onMove = (moveEvent) => {
+                  const dx = (moveEvent.clientX - startX) / scale
+                  const dy = (moveEvent.clientY - startY) / scale
+                  const subs = parsePathData(origD)
+                  const sub = subs[pt.si]
+                  if (!sub || !sub[pt.pi]) return
+                  sub[pt.pi] = [sub[pt.pi][0] + dx * sx, sub[pt.pi][1] + dy * sy]
+                  const d = subs
+                    .map(sp => sp.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${+x.toFixed(3)},${+y.toFixed(3)}`).join(' ') + (closed ? ' Z' : ''))
+                    .join(' ')
+                  dispatch({ type: 'UPDATE_OBJECT', payload: { id: obj.id, updates: { pathData: d, rings: undefined } } })
+                }
+                const onUp = () => {
+                  window.removeEventListener('mousemove', onMove)
+                  window.removeEventListener('mouseup', onUp)
+                }
+                window.addEventListener('mousemove', onMove)
+                window.addEventListener('mouseup', onUp)
+              }}
+            />
+          ))}
+        </div>
+      )
+    }
+
     const nodes = [
       { x: left, y: top, id: 'tl' },
       { x: left + width / 2, y: top, id: 'tm' },
@@ -902,6 +1198,32 @@ const Canvas = forwardRef((props, ref) => {
               width: Math.abs(currentPos.x - drawStart.x) * state.zoom,
               height: Math.abs(currentPos.y - drawStart.y) * state.zoom,
             }} />
+          )}
+          {isKnifing && (
+            <svg className="tool-overlay" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
+              <line
+                x1={knifeStart.x * state.zoom + state.panX * state.zoom}
+                y1={knifeStart.y * state.zoom + state.panY * state.zoom}
+                x2={knifeEnd.x * state.zoom + state.panX * state.zoom}
+                y2={knifeEnd.y * state.zoom + state.panY * state.zoom}
+                stroke="#ff4444"
+                strokeWidth="1.5"
+                strokeDasharray="6,3"
+              />
+            </svg>
+          )}
+          {isContouring && (
+            <svg className="tool-overlay" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
+              <line
+                x1={contourStart.x * state.zoom + state.panX * state.zoom}
+                y1={contourStart.y * state.zoom + state.panY * state.zoom}
+                x2={contourEnd.x * state.zoom + state.panX * state.zoom}
+                y2={contourEnd.y * state.zoom + state.panY * state.zoom}
+                stroke="#44aaff"
+                strokeWidth="1.5"
+                strokeDasharray="4,3"
+              />
+            </svg>
           )}
         </div>
       </div>

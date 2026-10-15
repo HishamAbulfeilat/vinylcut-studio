@@ -1,9 +1,22 @@
 import React, { createContext, useContext, useReducer, useCallback, useRef } from 'react'
-import * as polygonClippingNS from 'polygon-clipping'
-
-// polygon-clipping ships a default export (an object of ops) at runtime; named
-// exports exist only in the type definitions. Normalise both to one object.
-const polygonClipping = polygonClippingNS.default || polygonClippingNS
+import {
+  objectToRings,
+  objectToMultiPolygon,
+  multiPolygonToShape,
+  multiPolygonBounds,
+  ringArea,
+  multiPolygonToHPGL,
+  offsetMultiPolygon,
+  splitByLine,
+  simplify,
+  parsePathData,
+  union,
+  difference,
+  intersection,
+} from '../lib/geometry'
+import { importFile, loadImageElement } from '../lib/importers'
+import { vectorizeImage } from '../lib/tracer'
+import { buildSvg, buildPdf, buildPostScript, buildDxf, buildHpgl, rasterise, download, vectorObjects, encodeBmp } from '../lib/exporters'
 
 const AppContext = createContext()
 
@@ -112,103 +125,9 @@ function mergeEffect(state, patch) {
 }
 
 /* ------------------------------------------------------------------ *
- * Real boolean geometry helpers (polygon-clipping).
- * Geometry is expressed as a MultiPolygon: [ [ ring, hole, ... ], ... ]
- * where each ring is [ [x, y], ... ] in absolute canvas coordinates.
+ * Geometry helpers live in ../lib/geometry.js so the canvas, exporters
+ * and importers all share one implementation.
  * ------------------------------------------------------------------ */
-
-function rotatePoint(px, py, cx, cy, deg) {
-  const r = (deg || 0) * Math.PI / 180
-  const c = Math.cos(r)
-  const s = Math.sin(r)
-  const dx = px - cx
-  const dy = py - cy
-  return [cx + dx * c - dy * s, cy + dx * s + dy * c]
-}
-
-// Convert a shape object into a MultiPolygon in absolute coordinates.
-// Objects that already carry `.rings` (results of a previous boolean op) reuse them.
-function objectToMultiPolygon(obj) {
-  if (obj.rings && obj.rings.length) return obj.rings
-
-  const x = obj.x || 0
-  const y = obj.y || 0
-  const w = obj.width || 0
-  const h = obj.height || 0
-  const cx = x + w / 2
-  const cy = y + h / 2
-  const rx = w / 2
-  const ry = h / 2
-  let pts = []
-
-  if (obj.type === 'ellipse' || obj.type === 'powerCircle') {
-    const N = 64
-    for (let i = 0; i < N; i++) {
-      const a = (i / N) * Math.PI * 2
-      pts.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry])
-    }
-  } else if (obj.type === 'polygon' || obj.type === 'powerPolygon') {
-    const n = Math.max(3, obj.points || 5)
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 - Math.PI / 2
-      pts.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry])
-    }
-  } else if (obj.type === 'star' || obj.type === 'powerStar') {
-    const n = Math.max(2, obj.points || 5)
-    const inner = (obj.innerRadius || 50) / 100
-    for (let i = 0; i < n * 2; i++) {
-      const a = (i / (n * 2)) * Math.PI * 2 - Math.PI / 2
-      const rr = i % 2 === 0 ? 1 : inner
-      pts.push([cx + Math.cos(a) * rx * rr, cy + Math.sin(a) * ry * rr])
-    }
-  } else {
-    // rect and anything else -> bounding box
-    pts = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
-  }
-
-  const rot = obj.rotation || 0
-  if (rot) pts = pts.map(([px, py]) => rotatePoint(px, py, cx, cy, rot))
-
-  return [[pts]]
-}
-
-// Turn a MultiPolygon into a relocatable object piece:
-// pathData is relative to the geometry's own bounding box.
-function multiPolygonToShape(mp) {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const poly of mp) {
-    for (const ring of poly) {
-      for (const [px, py] of ring) {
-        if (px < minX) minX = px
-        if (px > maxX) maxX = px
-        if (py < minY) minY = py
-        if (py > maxY) maxY = py
-      }
-    }
-  }
-  if (!isFinite(minX)) return null
-
-  const parts = []
-  for (const poly of mp) {
-    for (const ring of poly) {
-      ring.forEach(([px, py], i) => {
-        const rx = +(px - minX).toFixed(3)
-        const ry = +(py - minY).toFixed(3)
-        parts.push(`${i === 0 ? 'M' : 'L'}${rx},${ry}`)
-      })
-      parts.push('Z')
-    }
-  }
-
-  return {
-    pathData: parts.join(' '),
-    rings: mp,
-    x: minX,
-    y: minY,
-    width: Math.max(maxX - minX, 0.01),
-    height: Math.max(maxY - minY, 0.01),
-  }
-}
 
 function appReducer(state, action) {
   switch (action.type) {
@@ -595,11 +514,16 @@ function appReducer(state, action) {
       return { ...state, objects: newObjects }
     }
 
-    case 'SET_FILL':
-      return { ...state, currentFill: { ...state.currentFill, ...action.payload } }
+    case 'SET_FILL': {
+      // Update the pending default *and* restyle the current selection.
+      const merged = { ...state, currentFill: { ...state.currentFill, ...action.payload } }
+      return mergeObjects(merged, { fill: merged.currentFill })
+    }
 
-    case 'SET_STROKE':
-      return { ...state, currentStroke: { ...state.currentStroke, ...action.payload } }
+    case 'SET_STROKE': {
+      const merged = { ...state, currentStroke: { ...state.currentStroke, ...action.payload } }
+      return mergeObjects(merged, { stroke: merged.currentStroke })
+    }
 
     case 'SET_EFFECT':
       return { ...state, currentEffect: { ...state.currentEffect, ...action.payload } }
@@ -621,8 +545,14 @@ function appReducer(state, action) {
       return { ...state, objects, selectedObject: objects.find(o => o.id === state.selectedObject.id) }
     }
 
-    case 'SET_TEXT_SETTINGS':
-      return { ...state, textSettings: { ...state.textSettings, ...action.payload } }
+    case 'SET_TEXT_SETTINGS': {
+      const merged = { ...state, textSettings: { ...state.textSettings, ...action.payload } }
+      const patch = {}
+      for (const k of ['fontFamily', 'fontSize', 'bold', 'italic', 'underline', 'align', 'lineSpacing']) {
+        if (k in action.payload) patch[k] = action.payload[k]
+      }
+      return Object.keys(patch).length ? mergeObjects(merged, patch) : merged
+    }
 
     case 'SET_PARAGRAPH_SETTINGS':
       return { ...state, paragraphSettings: { ...state.paragraphSettings, ...action.payload } }
@@ -753,7 +683,7 @@ function appReducer(state, action) {
       if (weldObjs.length < 2) return state
       try {
         const geoms = weldObjs.map(objectToMultiPolygon)
-        const shape = multiPolygonToShape(polygonClipping.union(geoms[0], ...geoms.slice(1)))
+        const shape = multiPolygonToShape(union(geoms[0], ...geoms.slice(1)))
         if (!shape) return state
         const welded = {
           id: generateId(),
@@ -780,8 +710,8 @@ function appReducer(state, action) {
       const punchBehind = punchObjs.slice(0, -1)
       try {
         let base = objectToMultiPolygon(punchBehind[0])
-        for (const o of punchBehind.slice(1)) base = polygonClipping.union(base, objectToMultiPolygon(o))
-        const shape = multiPolygonToShape(polygonClipping.difference(base, objectToMultiPolygon(punchFront)))
+        for (const o of punchBehind.slice(1)) base = union(base, objectToMultiPolygon(o))
+        const shape = multiPolygonToShape(difference(base, objectToMultiPolygon(punchFront)))
         if (!shape) return state
         const punched = {
           id: generateId(),
@@ -810,7 +740,7 @@ function appReducer(state, action) {
         const frontGeo = objectToMultiPolygon(trimFront)
         const pieces = []
         for (const o of trimRest) {
-          const shape = multiPolygonToShape(polygonClipping.difference(objectToMultiPolygon(o), frontGeo))
+          const shape = multiPolygonToShape(difference(objectToMultiPolygon(o), frontGeo))
           if (!shape) continue
           pieces.push({
             id: generateId(),
@@ -836,7 +766,7 @@ function appReducer(state, action) {
       if (cookieObjs.length < 2) return state
       try {
         let acc = objectToMultiPolygon(cookieObjs[0])
-        for (const o of cookieObjs.slice(1)) acc = polygonClipping.intersection(acc, objectToMultiPolygon(o))
+        for (const o of cookieObjs.slice(1)) acc = intersection(acc, objectToMultiPolygon(o))
         const shape = multiPolygonToShape(acc)
         if (!shape) return state
         const common = {
@@ -932,28 +862,224 @@ function appReducer(state, action) {
       return { ...state, objects: newObjects, selectedObjects: repeats.map(r => r.id) }
     }
 
+    case 'ADD_OBJECTS': {
+      // Bulk-insert fully-formed objects (imports, tracing, contour output).
+      const incoming = action.payload.objects || []
+      if (!incoming.length) return state
+      const withIds = incoming.map(o => ({ ...o, id: o.id || generateId() }))
+      const drop = action.payload.replaceIds || []
+      const kept = drop.length ? state.objects.filter(o => !drop.includes(o.id)) : state.objects
+      const objects = [...kept, ...withIds]
+      const last = withIds[withIds.length - 1]
+      return {
+        ...state,
+        objects,
+        selectedObjects: withIds.map(o => o.id),
+        selectedObject: last,
+        isModified: true,
+      }
+    }
+
+    case 'DELETE_OBJECTS': {
+      const ids = action.payload && action.payload.ids
+        ? action.payload.ids
+        : (state.selectedObjects.length ? state.selectedObjects : (state.selectedObject ? [state.selectedObject.id] : []))
+      if (!ids.length) return state
+      const objects = state.objects.filter(o => !ids.includes(o.id))
+      if (objects.length === state.objects.length) return state
+      return { ...state, objects, selectedObjects: [], selectedObject: null, isModified: true }
+    }
+
     case 'APPLY_KNIFE': {
-      if (!state.selectedObject) return state
-      const parts = [
-        { ...state.selectedObject, id: generateId(), pathData: 'M0,0 L50,0 L50,100 L0,100 Z' },
-        { ...state.selectedObject, id: generateId(), x: (state.selectedObject.x || 0) + 50, pathData: 'M50,0 L100,0 L100,100 L50,100 Z' },
-      ]
-      const newObjects = state.objects.filter(o => o.id !== state.selectedObject.id)
-      newObjects.push(...parts)
-      return { ...state, objects: newObjects, selectedObjects: parts.map(p => p.id) }
+      // Split every targeted object with a real line cut.
+      const line = action.payload || {}
+      const targets = state.selectedObjects.length
+        ? state.objects.filter(o => state.selectedObjects.includes(o.id))
+        : state.objects.slice()
+      if (!targets.length) return state
+
+      const pieces = []
+      let cut = false
+      for (const o of targets) {
+        const mp = objectToMultiPolygon(o)
+        const b = multiPolygonBounds(mp)
+        let p1
+        let p2
+        if (Number.isFinite(line.x1) && Number.isFinite(line.y1) && Number.isFinite(line.x2) && Number.isFinite(line.y2)) {
+          p1 = [line.x1, line.y1]
+          p2 = [line.x2, line.y2]
+        } else if (b) {
+          const cx = (b.minX + b.maxX) / 2
+          p1 = [cx, b.minY - 10]
+          p2 = [cx, b.maxY + 10]
+        } else {
+          continue
+        }
+        let left
+        let right
+        try {
+          ;[left, right] = splitByLine(mp, p1, p2)
+        } catch (e) {
+          continue
+        }
+        const sides = [left, right].filter(g => g && g.length && multiPolygonBounds(g))
+        if (sides.length < 2) continue
+        cut = true
+        for (const side of sides) {
+          const shape = multiPolygonToShape(side, o)
+          if (!shape) continue
+          pieces.push({
+            ...o,
+            ...shape,
+            id: generateId(),
+            type: 'path',
+            fill: { ...(o.fill || state.currentFill) },
+            stroke: { ...(o.stroke || state.currentStroke) },
+          })
+        }
+      }
+
+      if (!cut) return state
+      const drop = targets.map(t => t.id)
+      const objects = [...state.objects.filter(o => !drop.includes(o.id)), ...pieces]
+      return { ...state, objects, selectedObjects: pieces.map(p => p.id), selectedObject: pieces[0], isModified: true }
+    }
+
+    case 'APPLY_CONTOUR': {
+      // Real polygon offsetting: grow/shrink the selection and/or emit
+      // concentric contour rings.
+      const { delta = 2, count = 1, spacing = 2 } = action.payload || {}
+      const targets = state.selectedObjects.length
+        ? state.objects.filter(o => state.selectedObjects.includes(o.id))
+        : (state.selectedObject ? [state.selectedObject] : [])
+      if (!targets.length) return state
+
+      const produced = []
+      let any = false
+      for (const o of targets) {
+        const mp = objectToMultiPolygon(o)
+        for (let i = 1; i <= Math.max(1, count); i++) {
+          const d = count === 1 ? delta : delta + (i - 1) * spacing
+          let off
+          try {
+            off = offsetMultiPolygon(mp, d)
+          } catch (e) {
+            continue
+          }
+          const shape = multiPolygonToShape(off, o)
+          if (!shape) continue
+          any = true
+          produced.push({
+            ...o,
+            ...shape,
+            id: generateId(),
+            type: 'path',
+            fill: { type: 'none' },
+            stroke: { ...(o.stroke || state.currentStroke) },
+          })
+        }
+      }
+      if (!any) return state
+      return {
+        ...state,
+        objects: [...state.objects, ...produced],
+        selectedObjects: produced.map(p => p.id),
+        selectedObject: produced[0],
+        isModified: true,
+      }
+    }
+
+    case 'APPLY_CONTOUR_CUT': {
+      // Contour Cut Wizard: build real cut lines around the page/selection.
+      const cfg = action.payload || {}
+      const offset = Number.isFinite(cfg.offset) ? cfg.offset : 1
+      const stroke = {
+        color: cfg.cutLineColor || '#ff0000',
+        width: Number.isFinite(cfg.cutLineWidth) ? cfg.cutLineWidth : 0.25,
+      }
+      const cutType = cfg.cutType || 'contour'
+      const targets = state.selectedObjects.length
+        ? state.objects.filter(o => state.selectedObjects.includes(o.id))
+        : state.objects.slice()
+      if (!targets.length) return state
+
+      const produced = []
+      for (const o of targets) {
+        if (cutType === 'contour' || cutType === 'both') {
+          let mp = null
+          try {
+            mp = offsetMultiPolygon(objectToMultiPolygon(o), offset)
+          } catch (e) {
+            mp = null
+          }
+          if (mp && mp.length) {
+            let out = mp
+            if (cfg.skipInnerCuts) {
+              // Keep only the largest ring of each island.
+              out = mp.map((poly) => {
+                let best = poly[0]
+                for (const r of poly) if (ringArea(r) > ringArea(best)) best = r
+                return [best]
+              })
+            }
+            const shape = multiPolygonToShape(out, o)
+            if (shape) {
+              produced.push({
+                ...shape,
+                id: generateId(),
+                type: 'path',
+                fill: { type: 'none' },
+                stroke: { ...stroke },
+                isCutLine: true,
+              })
+            }
+          }
+        }
+        if (cutType === 'crop' || cutType === 'both') {
+          produced.push({
+            id: generateId(),
+            type: 'rect',
+            x: (o.x || 0) - offset,
+            y: (o.y || 0) - offset,
+            width: (o.width || 0) + offset * 2,
+            height: (o.height || 0) + offset * 2,
+            rotation: 0,
+            scaleX: 1,
+            scaleY: 1,
+            skewX: 0,
+            skewY: 0,
+            opacity: 100,
+            fill: { type: 'none' },
+            stroke: { ...stroke },
+            isCutLine: true,
+          })
+        }
+      }
+      if (!produced.length) return state
+
+      // Cut order: inside-out (smallest first) or the reverse.
+      produced.sort((a, b) => (a.width || 0) * (a.height || 0) - (b.width || 0) * (b.height || 0))
+      if (cfg.cutOrder === 'outsideIn') produced.reverse()
+
+      return {
+        ...state,
+        objects: [...state.objects, ...produced],
+        selectedObjects: produced.map(p => p.id),
+        selectedObject: produced[0],
+        isModified: true,
+      }
     }
 
     case 'APPLY_VECTORIZE': {
-      if (!state.selectedObject || state.selectedObject.type !== 'image') return state
-      const vectorized = {
-        ...state.selectedObject,
-        id: generateId(),
-        type: 'path',
-        pathData: 'M10,10 L90,10 L90,90 L10,90 Z',
-        isVectorized: true,
-      }
-      const newObjects = [...state.objects, vectorized]
-      return { ...state, objects: newObjects, selectedObjects: [vectorized.id], selectedObject: vectorized }
+      // The tracing itself happens in the provider action (it is async and
+      // needs the image element); the reducer just installs the result.
+      const shapes = (action.payload && action.payload.objects) || []
+      if (!shapes.length) return state
+      const withIds = shapes.map(s => ({ ...s, id: generateId() }))
+      const drop = (action.payload && action.payload.replaceIds) || []
+      const kept = drop.length ? state.objects.filter(o => !drop.includes(o.id)) : state.objects
+      const objects = [...kept, ...withIds]
+      return { ...state, objects, selectedObjects: withIds.map(o => o.id), selectedObject: withIds[withIds.length - 1], isModified: true }
     }
 
     case 'APPLY_WARP':
@@ -1291,6 +1417,22 @@ export function AppProvider({ children }) {
     input.click()
   }, [readDocumentFile])
 
+  const openImportPicker = useCallback(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.id = 'vcs-import-input'
+    input.accept = '.svg,.dxf,.plt,.hpgl,.hgl,.png,.jpg,.jpeg,.gif,.bmp,.webp,.avif,.json,.vcs'
+    input.style.display = 'none'
+    input.onchange = async (e) => {
+      const f = e.target.files && e.target.files[0]
+      input.remove()
+      if (!f) return
+      await importAnyFile(f)
+    }
+    document.body.appendChild(input)
+    input.click()
+  }, [])
+
   const serialiseDocument = useCallback(() => {
     const s = stateRef.current
     return JSON.stringify({
@@ -1307,12 +1449,182 @@ export function AppProvider({ children }) {
     }, null, 2)
   }, [])
 
+  const notify = useCallback((message, kind = 'info') => {
+    try {
+      window.dispatchEvent(new CustomEvent('vcs-notify', { detail: { message, kind } }))
+    } catch (e) {
+      /* ignore */
+    }
+  }, [])
+
+  // Real import: raster / SVG / DXF / HPGL / document.
+  const importAnyFile = useCallback(async (file) => {
+    const page = stateRef.current.pages[stateRef.current.activePage] || { width: 210, height: 297 }
+    try {
+      const result = await importFile(file, page)
+      if (result.document) {
+        dispatch({ type: 'LOAD_DOCUMENT', payload: { doc: result.document, name: file.name } })
+        notify(`Opened ${file.name}`, 'ok')
+        return
+      }
+      const objects = result.objects || []
+      if (!objects.length) {
+        notify(`Nothing importable found in ${file.name}`, 'warn')
+        return
+      }
+      dispatch({ type: 'ADD_OBJECTS', payload: { objects } })
+      notify(`Imported ${objects.length} object${objects.length === 1 ? '' : 's'} from ${file.name}`, 'ok')
+    } catch (err) {
+      notify(err && err.message ? err.message : 'Import failed', 'error')
+    }
+  }, [notify])
+
+  // Real export for every advertised format.
+  const exportAs = useCallback(async (format, options = {}) => {
+    const s = stateRef.current
+    const page = s.pages[s.activePage] || { width: 210, height: 297 }
+    const objects = s.objects
+    const base = (s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')
+    const dpi = options.dpi || 300
+    const px = (mm) => Math.max(1, Math.round((mm / 25.4) * dpi))
+
+    if (!objects.length) {
+      notify('Nothing to export - the page is empty', 'warn')
+      return null
+    }
+
+    const svg = buildSvg(objects, page, {
+      cropMarks: options.includeCropMarks,
+      registrationMarks: options.includeRegistrationMarks,
+      transparentBg: options.transparentBg !== false,
+    })
+
+    const f = format.toLowerCase()
+    try {
+      if (f === 'svg') {
+        download(svg, `${base}.svg`, 'image/svg+xml')
+      } else if (f === 'png' || f === 'jpg' || f === 'jpeg') {
+        const mime = f === 'png' ? 'image/png' : 'image/jpeg'
+        const url = await rasterise(svg, px(page.width), px(page.height), mime, 0.95)
+        download(url, `${base}.${f === 'jpeg' ? 'jpg' : f}`)
+      } else if (f === 'bmp') {
+        const url = await rasterise(svg, px(page.width), px(page.height), 'image/png', 1)
+        const img = await loadImageElement(url)
+        const canvas = document.createElement('canvas')
+        canvas.width = img.naturalWidth
+        canvas.height = img.naturalHeight
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        const bmp = encodeBmp(data)
+        download(new Blob([bmp], { type: 'image/bmp' }), `${base}.bmp`)
+      } else if (f === 'pdf') {
+        download(buildPdf(objects, page), `${base}.pdf`, 'application/pdf')
+      } else if (f === 'eps' || f === 'ps') {
+        download(buildPostScript(objects, page), `${base}.eps`, 'application/postscript')
+      } else if (f === 'ai') {
+        download(buildPostScript(objects, page), `${base}.ai`, 'application/postscript')
+      } else if (f === 'dxf') {
+        download(buildDxf(objects), `${base}.dxf`, 'application/dxf')
+      } else if (f === 'plt' || f === 'hpgl') {
+        download(buildHpgl(objects, options), `${base}.plt`, 'application/vnd.hp-hpgl')
+      } else {
+        notify(`Export format .${f} is not supported`, 'error')
+        return null
+      }
+      dispatch({ type: 'SAVE_DOCUMENT' })
+      notify(`Exported ${base}.${f}`, 'ok')
+      return `${base}.${f}`
+    } catch (err) {
+      notify(err && err.message ? err.message : 'Export failed', 'error')
+      return null
+    }
+  }, [notify])
+
+  // Real raster tracing -> vector paths.
+  const vectorizeSelected = useCallback(async (options = {}) => {
+    const s = stateRef.current
+    const target = s.selectedObject && s.selectedObject.type === 'image'
+      ? s.selectedObject
+      : s.objects.find(o => o.type === 'image')
+    if (!target || !target.src) {
+      notify('Select an imported image first (File > Import, then Vectorize)', 'warn')
+      return null
+    }
+    try {
+      const img = await loadImageElement(target.src)
+      const rect = { x: target.x, y: target.y, width: target.width, height: target.height }
+      const shapes = vectorizeImage(img, rect, {
+        mode: options.mode || 'outline',
+        threshold: options.threshold == null ? 128 : options.threshold,
+        colors: options.colors || 8,
+        smoothing: options.smoothing == null ? 0.8 : options.smoothing,
+        noise: options.noise == null ? 3 : options.noise,
+      })
+      if (!shapes.length) {
+        notify('Vectorize found nothing at this threshold - try a different setting', 'warn')
+        return null
+      }
+      dispatch({
+        type: 'APPLY_VECTORIZE',
+        payload: { objects: shapes, replaceIds: options.replaceSource ? [target.id] : [] },
+      })
+      notify(`Vectorized into ${shapes.length} path${shapes.length === 1 ? '' : 's'}`, 'ok')
+      return shapes.length
+    } catch (err) {
+      notify(err && err.message ? err.message : 'Vectorize failed', 'error')
+      return null
+    }
+  }, [notify])
+
+  // HPGL spooling: always offers a real .plt file; also streams over WebSerial
+  // when the browser and the cutter both support it.
+  const serialSupported = typeof navigator !== 'undefined' && 'serial' in navigator
+
+  const sendToCutter = useCallback(async (options = {}) => {
+    const s = stateRef.current
+    const objects = s.selectedObjects.length
+      ? s.objects.filter(o => s.selectedObjects.includes(o.id))
+      : s.objects
+    if (!objects.length) {
+      notify('Nothing to cut - the page is empty', 'warn')
+      return null
+    }
+    const hpgl = buildHpgl(objects, options)
+    if (!serialSupported || options.downloadOnly) {
+      download(hpgl, `${(s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')}.plt`, 'application/vnd.hp-hpgl')
+      notify('Saved HPGL (.plt) - load it from your cutter software', 'ok')
+      return 'download'
+    }
+    try {
+      const port = await navigator.serial.requestPort()
+      await port.open({ baudRate: options.baudRate || 9600 })
+      const writer = port.writable.getWriter()
+      await writer.write(new TextEncoder().encode(hpgl))
+      writer.releaseLock()
+      await port.close()
+      notify('Sent to cutter over serial', 'ok')
+      return 'serial'
+    } catch (err) {
+      download(hpgl, `${(s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')}.plt`, 'application/vnd.hp-hpgl')
+      notify('Serial send cancelled - saved HPGL (.plt) instead', 'warn')
+      return 'download'
+    }
+  }, [notify, serialSupported])
+
   const actions = {
     newDocument: useCallback(() => dispatch({ type: 'NEW_DOCUMENT' }), []),
     loadFile: useCallback((file) => {
       if (file) readDocumentFile(file)
       else openDocumentPicker()
     }, [readDocumentFile, openDocumentPicker]),
+    importFile: importAnyFile,
+    openImportPicker,
+    exportAs,
+    vectorizeSelected,
+    sendToCutter,
+    serialSupported,
+    notify,
     saveDocument: useCallback(() => {
       const s = stateRef.current
       const blob = new Blob([serialiseDocument()], { type: 'application/json' })
@@ -1356,6 +1668,8 @@ export function AppProvider({ children }) {
     skew: useCallback((skewX, skewY) => dispatch({ type: 'SKEW', payload: { skewX, skewY } }), []),
     updateProperty: useCallback((property, value) => dispatch({ type: 'UPDATE_PROPERTY', payload: { property, value } }), []),
     addObject: useCallback((obj) => dispatch({ type: 'ADD_OBJECT', payload: obj }), []),
+    addObjects: useCallback((objects, replaceIds) => dispatch({ type: 'ADD_OBJECTS', payload: { objects, replaceIds } }), []),
+    deleteObjects: useCallback((ids) => dispatch({ type: 'DELETE_OBJECTS', payload: { ids } }), []),
     updateObject: useCallback((id, updates) => dispatch({ type: 'UPDATE_OBJECT', payload: { id, updates } }), []),
     setFill: useCallback((fill) => dispatch({ type: 'SET_FILL', payload: fill }), []),
     setStroke: useCallback((stroke) => dispatch({ type: 'SET_STROKE', payload: stroke }), []),
@@ -1395,8 +1709,10 @@ export function AppProvider({ children }) {
     applyOutline: useCallback(() => dispatch({ type: 'APPLY_OUTLINE' }), []),
     applyClone: useCallback(() => dispatch({ type: 'APPLY_CLONE' }), []),
     applyStepRepeat: useCallback(() => dispatch({ type: 'APPLY_STEP_REPEAT' }), []),
-    applyKnife: useCallback(() => dispatch({ type: 'APPLY_KNIFE' }), []),
-    applyVectorize: useCallback(() => dispatch({ type: 'APPLY_VECTORIZE' }), []),
+    applyKnife: useCallback((line) => dispatch({ type: 'APPLY_KNIFE', payload: line }), []),
+    applyContour: useCallback((config) => dispatch({ type: 'APPLY_CONTOUR', payload: config }), []),
+    applyContourCut: useCallback((config) => dispatch({ type: 'APPLY_CONTOUR_CUT', payload: config }), []),
+    applyVectorize: useCallback((objects, replaceIds) => dispatch({ type: 'APPLY_VECTORIZE', payload: { objects, replaceIds } }), []),
     applyWarp: useCallback(() => dispatch({ type: 'APPLY_WARP' }), []),
     apply3D: useCallback(() => dispatch({ type: 'APPLY_3D' }), []),
     applyTextToPath: useCallback(() => dispatch({ type: 'APPLY_TEXT_TO_PATH' }), []),

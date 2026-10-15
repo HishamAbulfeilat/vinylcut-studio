@@ -1,0 +1,126 @@
+.vectorize-dialog {
+  width: 460px;
+  max-width: 92vw;
+}
+
+.vectorize-dialog .dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.vectorize-preview {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: #14161c;
+  border: 1px solid #262a33;
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.vectorize-preview img {
+  max-width: 200px;
+  max-height: 140px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 4px;
+}
+
+.vectorize-meta {
+  font-size: 12px;
+  color: #9aa3b2;
+}
+
+.vectorize-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vectorize-row label {
+  width: 96px;
+  font-size: 13px;
+  color: #c8ced9;
+}
+
+.vectorize-row input[type='range'] {
+  flex: 1;
+}
+
+.vectorize-value {
+  width: 56px;
+  text-align: right;
+  font-size: 12px;
+  color: #8ab4f8;
+  font-variant-numeric: tabular-nums;
+}
+
+.vectorize-seg {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+
+.vectorize-seg button {
+  flex: 1;
+  padding: 6px 8px;
+  background: #1c1f27;
+  border: 1px solid #2c313c;
+  color: #c8ced9;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.vectorize-seg button.active {
+  background: #2b6cb0;
+  border-color: #2b6cb0;
+  color: #fff;
+}
+
+.vectorize-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #c8ced9;
+}
+
+.vectorize-hint {
+  font-size: 13px;
+  color: #9aa3b2;
+  line-height: 1.5;
+}
+
+.vcs-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 46px;
+  z-index: 4000;
+  max-width: 420px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #eef2f8;
+  background: #232833;
+  border: 1px solid #333a48;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
+.vcs-toast-ok {
+  border-color: #2f855a;
+  background: #1d3b2c;
+}
+
+.vcs-toast-warn {
+  border-color: #b7791f;
+  background: #3a2f18;
+}
+
+.vcs-toast-error {
+  border-color: #c53030;
+  background: #3d1f1f;
+}

@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext'
 import './ContourCutWizard.css'
 
 export default function ContourCutWizard({ onClose }) {
-  const { state } = useApp()
+  const { state, actions } = useApp()
   const [step, setStep] = useState(1)
   const [settings, setSettings] = useState({
     cutType: 'contour',
@@ -19,6 +19,22 @@ export default function ContourCutWizard({ onClose }) {
   })
 
   const totalSteps = 4
+
+  const apply = () => {
+    actions.applyContourCut({
+      cutType: settings.cutType,
+      offset: settings.offset,
+      cornerStyle: settings.cornerStyle,
+      cutLineColor: settings.cutLineColor,
+      cutLineWidth: settings.cutLineWidth,
+      cutOrder: settings.cutOrder,
+      skipInnerCuts: settings.skipInnerCuts,
+      addRegistrationMarks: settings.addRegistrationMarks,
+      markSize: settings.markSize,
+      markOffset: settings.markOffset,
+    })
+    onClose()
+  }
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
@@ -128,7 +144,7 @@ export default function ContourCutWizard({ onClose }) {
           {step < totalSteps ? (
             <button className="btn btn-primary" onClick={() => setStep(step + 1)}>Next</button>
           ) : (
-            <button className="btn btn-primary" onClick={onClose}>Apply & Close</button>
+            <button className="btn btn-primary" onClick={apply}>Apply &amp; Close</button>
           )}
         </div>
       </div>

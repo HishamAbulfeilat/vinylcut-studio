@@ -657,7 +657,21 @@ export default function PropertyPanel({ selectedObject, onPropertyChange }) {
               <input type="number" min="2" max="256" value={state.traceSettings.colorCount} onChange={(e) => actions.setTraceSettings({ colorCount: parseInt(e.target.value) })} />
             </div>
             <div className="action-buttons">
-              <button onClick={() => actions.applyVectorize()}>Vectorize Image</button>
+              <button onClick={() => {
+                const ts = state.traceSettings
+                if (ts.mode === 'centerline') {
+                  actions.notify('Centerline tracing is not available - using Outline trace', 'warn')
+                }
+                actions.vectorizeSelected({
+                  mode: ts.mode === 'color' ? 'color' : 'outline',
+                  threshold: ts.threshold,
+                  colors: ts.colorCount,
+                  smoothing: ts.smoothing * 0.4,
+                  noise: ts.noiseReduction * 8,
+                  replaceSource: true,
+                })
+              }}>Vectorize Image</button>
+              <button onClick={() => window.dispatchEvent(new CustomEvent('openDialog', { detail: 'vectorize' }))}>Trace Options…</button>
             </div>
           </div>
         )}
