@@ -123,16 +123,12 @@ export default function MenuBar({
       ]
     },
     {
-      label: 'Tools',
+      label: 'Utilities',
       items: [
         { label: 'Font Manager...', action: () => window.dispatchEvent(new CustomEvent('openDialog', { detail: 'fontManager' })) },
         { label: 'Color Library...', action: () => window.dispatchEvent(new CustomEvent('openDialog', { detail: 'colorLibrary' })) },
         { label: 'Gradient Editor...' },
         { label: 'Texture Library...' },
-        { type: 'separator' },
-        { label: 'Vectorize (Trace)' },
-        { label: 'Contour Cut Wizard' },
-        { label: 'Vinyl Spooler', shortcut: 'Shift+Alt+V' },
       ]
     },
     {

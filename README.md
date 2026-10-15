@@ -11,14 +11,19 @@ An original, open-source sign-making and vinyl cutting web app built with React 
 - 40+ drawing tools (shapes, curve/pen, text incl. arc/path/vertical/paragraph)
 - Selection: click, shift-click multi-select, marquee (rubber-band), drag to move
 - Real boolean geometry — **Weld, Punch Out, Trim, Cookie Cut** (via `polygon-clipping`)
-- **Save / Open** documents as `.vcs.json` (full round-trip)
+- **Live effects** — 3D / Logo-3D extrusion, Block / Drop / Soft shadow, Glow,
+  Outline, Inner Outline, Multi-Outline, Multi-Inline, Tint Map, Fire, Reflect.
+  Effects are stored on the object, layered around it at render time, and survive save/load.
+- **Warps** — Circle, Coons, Flag, Perspective, Skirt, Trapezoid, Wave, rendered for real
+  by slicing the object into displaced/scaled strips
+- **Save / Open** documents as `.vcs.json` (full round-trip, including effects)
 - Undo/redo, align, z-order, group, duplicate, copy/paste
 - Export dialog, Cut spooler and contour-cut wizard UI, colour/font libraries
 
 **Cosmetic only** (renders nothing or a placeholder):
-- Warp (7 types) and 3D / Logo-3D tag an object but are not rendered
 - Vectorize returns a placeholder rectangle — there is no image tracing
 - Knife does not actually split paths
+- Inner Outline is approximated (stroked copy clipped to the object box, not a true outset path)
 
 **Not possible in a browser app:**
 - Driving real cutters — there is no USB/serial or HPGL device output

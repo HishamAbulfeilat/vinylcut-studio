@@ -5,6 +5,8 @@ import './PropertyPanel.css'
 export default function PropertyPanel({ selectedObject, onPropertyChange }) {
   const { state, actions } = useApp()
   const [activeSection, setActiveSection] = useState('position')
+  // Effects live on the selected object; fall back to the pending defaults.
+  const eff = (selectedObject && selectedObject.effect) || state.currentEffect
 
   const handleChange = (property, value) => {
     if (property.startsWith('fill.')) {
@@ -294,7 +296,21 @@ export default function PropertyPanel({ selectedObject, onPropertyChange }) {
             <h4>Effects</h4>
             <div className="property-row">
               <label>Effect:</label>
-              <select value={state.currentEffect.type} onChange={(e) => actions.setEffect({ type: e.target.value })}>
+              <select value={eff.type || 'none'} onChange={(e) => {
+                const map = {
+                  none: () => actions.clearEffect(),
+                  outline: () => actions.applyOutline(),
+                  multiOutline: () => actions.applyMultiOutline(),
+                  multiInline: () => actions.applyMultiInline(),
+                  innerOutline: () => actions.applyInnerOutline(),
+                  tintMap: () => actions.applyTintMap(),
+                  fire: () => actions.applyFireEffect(),
+                  reflect: () => actions.applyReflectEffect(),
+                  logo3D: () => actions.applyLogo3D(),
+                }
+                const fn = map[e.target.value]
+                if (fn) fn()
+              }}>
                 <option value="none">None</option>
                 <option value="outline">Outline</option>
                 <option value="multiOutline">Multi-Outline</option>
@@ -324,22 +340,22 @@ export default function PropertyPanel({ selectedObject, onPropertyChange }) {
             <h4>3D Effect</h4>
             <div className="property-row">
               <label>Depth:</label>
-              <input type="range" min="1" max="100" value={state.currentEffect.threeD?.depth || 20} onChange={(e) => actions.setEffect({ threeD: { ...state.currentEffect.threeD, depth: parseInt(e.target.value) } })} />
-              <span>{state.currentEffect.threeD?.depth || 20}px</span>
+              <input type="range" min="1" max="100" value={eff.threeD?.depth || 20} onChange={(e) => actions.setEffect({ threeD: { ...eff.threeD, depth: parseInt(e.target.value) } })} />
+              <span>{eff.threeD?.depth || 20}px</span>
             </div>
             <div className="property-row">
               <label>Angle:</label>
-              <input type="range" min="0" max="360" value={state.currentEffect.threeD?.angle || 45} onChange={(e) => actions.setEffect({ threeD: { ...state.currentEffect.threeD, angle: parseInt(e.target.value) } })} />
-              <span>{state.currentEffect.threeD?.angle || 45}°</span>
+              <input type="range" min="0" max="360" value={eff.threeD?.angle || 45} onChange={(e) => actions.setEffect({ threeD: { ...eff.threeD, angle: parseInt(e.target.value) } })} />
+              <span>{eff.threeD?.angle || 45}°</span>
             </div>
             <div className="property-row">
               <label>Bevel:</label>
-              <input type="range" min="0" max="20" value={state.currentEffect.threeD?.bevel || 5} onChange={(e) => actions.setEffect({ threeD: { ...state.currentEffect.threeD, bevel: parseInt(e.target.value) } })} />
-              <span>{state.currentEffect.threeD?.bevel || 5}px</span>
+              <input type="range" min="0" max="20" value={eff.threeD?.bevel || 5} onChange={(e) => actions.setEffect({ threeD: { ...eff.threeD, bevel: parseInt(e.target.value) } })} />
+              <span>{eff.threeD?.bevel || 5}px</span>
             </div>
             <div className="property-row">
               <label>Lighting:</label>
-              <select value={state.currentEffect.threeD?.lighting || 'top-left'} onChange={(e) => actions.setEffect({ threeD: { ...state.currentEffect.threeD, lighting: e.target.value } })}>
+              <select value={eff.threeD?.lighting || 'top-left'} onChange={(e) => actions.setEffect({ threeD: { ...eff.threeD, lighting: e.target.value } })}>
                 <option value="top-left">Top Left</option>
                 <option value="top-right">Top Right</option>
                 <option value="bottom-left">Bottom Left</option>
@@ -374,22 +390,22 @@ export default function PropertyPanel({ selectedObject, onPropertyChange }) {
             </div>
             <div className="property-row">
               <label>Offset X:</label>
-              <input type="number" value={state.currentEffect.blockShadow?.offsetX || 3} onChange={(e) => actions.setEffect({ blockShadow: { ...state.currentEffect.blockShadow, offsetX: parseInt(e.target.value) } })} />
+              <input type="number" value={eff.blockShadow?.offsetX || 3} onChange={(e) => actions.setEffect({ blockShadow: { ...eff.blockShadow, offsetX: parseInt(e.target.value) } })} />
               <span>px</span>
             </div>
             <div className="property-row">
               <label>Offset Y:</label>
-              <input type="number" value={state.currentEffect.blockShadow?.offsetY || 3} onChange={(e) => actions.setEffect({ blockShadow: { ...state.currentEffect.blockShadow, offsetY: parseInt(e.target.value) } })} />
+              <input type="number" value={eff.blockShadow?.offsetY || 3} onChange={(e) => actions.setEffect({ blockShadow: { ...eff.blockShadow, offsetY: parseInt(e.target.value) } })} />
               <span>px</span>
             </div>
             <div className="property-row">
               <label>Blur:</label>
-              <input type="range" min="0" max="30" value={state.currentEffect.dropShadow?.blur || 5} onChange={(e) => actions.setEffect({ dropShadow: { ...state.currentEffect.dropShadow, blur: parseInt(e.target.value) } })} />
-              <span>{state.currentEffect.dropShadow?.blur || 5}px</span>
+              <input type="range" min="0" max="30" value={eff.dropShadow?.blur || 5} onChange={(e) => actions.setEffect({ dropShadow: { ...eff.dropShadow, blur: parseInt(e.target.value) } })} />
+              <span>{eff.dropShadow?.blur || 5}px</span>
             </div>
             <div className="property-row">
               <label>Color:</label>
-              <input type="color" value={state.currentEffect.dropShadow?.color || '#000000'} onChange={(e) => actions.setEffect({ dropShadow: { ...state.currentEffect.dropShadow, color: e.target.value } })} />
+              <input type="color" value={eff.dropShadow?.color || '#000000'} onChange={(e) => actions.setEffect({ dropShadow: { ...eff.dropShadow, color: e.target.value } })} />
             </div>
             <div className="action-buttons">
               <button onClick={() => actions.applyBlockShadow()}>Block Shadow</button>

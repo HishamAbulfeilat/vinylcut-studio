@@ -73,6 +73,45 @@ function generateId() {
 }
 
 /* ------------------------------------------------------------------ *
+ * Live effects. Effects are stored on the object itself (`obj.effect`)
+ * so they travel with the shape, survive save/load and can be layered.
+ * ------------------------------------------------------------------ */
+
+// Apply a warp to the selected object(s), in place.
+function mergeWarp(state, type) {
+  const intensity = state.warpSettings ? state.warpSettings.intensity : 50
+  return mergeObjects(state, { warpType: type, warpIntensity: intensity })
+}
+
+// Merge arbitrary props (not just effects) into every selected object.
+function mergeObjects(state, patch) {
+  const ids = (state.selectedObjects && state.selectedObjects.length)
+    ? state.selectedObjects
+    : (state.selectedObject ? [state.selectedObject.id] : [])
+  if (!ids.length) return state
+  const objects = state.objects.map(o => (ids.includes(o.id) ? { ...o, ...patch } : o))
+  const selectedObject = state.selectedObject
+    ? (objects.find(o => o.id === state.selectedObject.id) || state.selectedObject)
+    : null
+  return { ...state, objects, selectedObject }
+}
+
+// Merge an effect patch into every selected object, in place.
+function mergeEffect(state, patch) {
+  const ids = (state.selectedObjects && state.selectedObjects.length)
+    ? state.selectedObjects
+    : (state.selectedObject ? [state.selectedObject.id] : [])
+  if (!ids.length) return state
+  const objects = state.objects.map(o =>
+    ids.includes(o.id) ? { ...o, effect: { ...(o.effect || {}), ...patch } } : o
+  )
+  const selectedObject = state.selectedObject
+    ? (objects.find(o => o.id === state.selectedObject.id) || state.selectedObject)
+    : null
+  return { ...state, objects, selectedObject }
+}
+
+/* ------------------------------------------------------------------ *
  * Real boolean geometry helpers (polygon-clipping).
  * Geometry is expressed as a MultiPolygon: [ [ ring, hole, ... ], ... ]
  * where each ring is [ [x, y], ... ] in absolute canvas coordinates.
@@ -565,6 +604,23 @@ function appReducer(state, action) {
     case 'SET_EFFECT':
       return { ...state, currentEffect: { ...state.currentEffect, ...action.payload } }
 
+    case 'UPDATE_EFFECT': {
+      const currentEffect = { ...state.currentEffect, ...action.payload }
+      if (!state.selectedObject) return { ...state, currentEffect }
+      return { ...mergeEffect(state, action.payload), currentEffect }
+    }
+
+    case 'CLEAR_EFFECT': {
+      if (!state.selectedObject) return state
+      const objects = state.objects.map(o => {
+        if (o.id !== state.selectedObject.id) return o
+        const next = { ...o }
+        delete next.effect
+        return next
+      })
+      return { ...state, objects, selectedObject: objects.find(o => o.id === state.selectedObject.id) }
+    }
+
     case 'SET_TEXT_SETTINGS':
       return { ...state, textSettings: { ...state.textSettings, ...action.payload } }
 
@@ -689,15 +745,8 @@ function appReducer(state, action) {
       return { ...state, pages: newPages }
     }
 
-    case 'APPLY_EFFECT': {
-      if (!state.selectedObject) return state
-      const newObjects = state.objects.map(obj =>
-        obj.id === state.selectedObject.id
-          ? { ...obj, effect: { ...state.currentEffect, ...action.payload } }
-          : obj
-      )
-      return { ...state, objects: newObjects }
-    }
+    case 'APPLY_EFFECT':
+      return mergeEffect(state, action.payload)
 
     case 'APPLY_WELD': {
       const weldObjs = state.objects.filter(o => state.selectedObjects.includes(o.id))
@@ -806,18 +855,11 @@ function appReducer(state, action) {
       }
     }
 
-    case 'APPLY_OUTLINE': {
-      if (!state.selectedObject) return state
-      const outline = {
-        ...state.selectedObject,
-        id: generateId(),
-        fill: { type: 'none' },
-        stroke: { color: state.currentStroke.color, width: state.currentStroke.width },
-        isOutline: true,
-      }
-      const newObjects = [...state.objects, outline]
-      return { ...state, objects: newObjects, selectedObjects: [outline.id], selectedObject: outline }
-    }
+    case 'APPLY_OUTLINE':
+      return mergeEffect(state, {
+        type: 'outline',
+        outline: { color: state.currentStroke.color, width: state.currentStroke.width || 2, ...(state.currentEffect.outline || {}) },
+      })
 
     case 'APPLY_CLONE': {
       if (!state.selectedObject) return state
@@ -914,31 +956,14 @@ function appReducer(state, action) {
       return { ...state, objects: newObjects, selectedObjects: [vectorized.id], selectedObject: vectorized }
     }
 
-    case 'APPLY_WARP': {
-      if (!state.selectedObject) return state
-      const warped = {
-        ...state.selectedObject,
-        id: generateId(),
-        warpType: state.warpSettings.type,
-        warpIntensity: state.warpSettings.intensity,
-      }
-      const newObjects = [...state.objects, warped]
-      return { ...state, objects: newObjects, selectedObjects: [warped.id], selectedObject: warped }
-    }
+    case 'APPLY_WARP':
+      return mergeWarp(state, state.warpSettings.type)
 
-    case 'APPLY_3D': {
-      if (!state.selectedObject) return state
-      const threeD = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: {
-          ...state.currentEffect,
-          threeD: { depth: 20, angle: 45, bevel: 5, lighting: 'top-left' }
-        }
-      }
-      const newObjects = [...state.objects, threeD]
-      return { ...state, objects: newObjects, selectedObjects: [threeD.id], selectedObject: threeD }
-    }
+    case 'APPLY_3D':
+      return mergeEffect(state, {
+        type: 'threeD',
+        threeD: { depth: 20, angle: 45, bevel: 5, lighting: 'top-left', ...(state.currentEffect.threeD || {}) },
+      })
 
     case 'APPLY_TEXT_TO_PATH': {
       if (!state.selectedObject || state.selectedObject.type !== 'text') return state
@@ -988,62 +1013,35 @@ function appReducer(state, action) {
       return { ...state, objects: newObjects, selectedObjects: [paragraph.id], selectedObject: paragraph }
     }
 
-    case 'APPLY_INNER_OUTLINE': {
-      if (!state.selectedObject) return state
-      const innerOutline = {
-        ...state.selectedObject,
-        id: generateId(),
-        fill: { type: 'none' },
-        stroke: { color: state.currentStroke.color, width: state.currentStroke.width },
-        isInnerOutline: true,
-      }
-      const newObjects = [...state.objects, innerOutline]
-      return { ...state, objects: newObjects, selectedObjects: [innerOutline.id], selectedObject: innerOutline }
-    }
+    case 'APPLY_INNER_OUTLINE':
+      return mergeEffect(state, {
+        type: 'innerOutline',
+        innerOutline: { color: state.currentStroke.color, width: state.currentStroke.width || 2, ...(state.currentEffect.innerOutline || {}) },
+      })
 
-    case 'APPLY_TINT_MAP': {
-      if (!state.selectedObject) return state
-      const tintMap = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: { ...state.currentEffect, tintMap: { color: '#ff0000', intensity: 50 } }
-      }
-      const newObjects = [...state.objects, tintMap]
-      return { ...state, objects: newObjects, selectedObjects: [tintMap.id], selectedObject: tintMap }
-    }
+    case 'APPLY_TINT_MAP':
+      return mergeEffect(state, {
+        type: 'tintMap',
+        tintMap: { color: '#ff0000', intensity: 50, ...(state.currentEffect.tintMap || {}) },
+      })
 
-    case 'APPLY_FIRE_EFFECT': {
-      if (!state.selectedObject) return state
-      const fire = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: { ...state.currentEffect, fire: { intensity: 50, color1: '#ff0000', color2: '#ffff00' } }
-      }
-      const newObjects = [...state.objects, fire]
-      return { ...state, objects: newObjects, selectedObjects: [fire.id], selectedObject: fire }
-    }
+    case 'APPLY_FIRE_EFFECT':
+      return mergeEffect(state, {
+        type: 'fire',
+        fire: { intensity: 50, color1: '#ff0000', color2: '#ffff00', ...(state.currentEffect.fire || {}) },
+      })
 
-    case 'APPLY_REFLECT_EFFECT': {
-      if (!state.selectedObject) return state
-      const reflect = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: { ...state.currentEffect, reflect: { opacity: 50, blur: 5, offset: 10 } }
-      }
-      const newObjects = [...state.objects, reflect]
-      return { ...state, objects: newObjects, selectedObjects: [reflect.id], selectedObject: reflect }
-    }
+    case 'APPLY_REFLECT_EFFECT':
+      return mergeEffect(state, {
+        type: 'reflect',
+        reflect: { opacity: 50, blur: 5, offset: 10, ...(state.currentEffect.reflect || {}) },
+      })
 
-    case 'APPLY_LOGO_3D': {
-      if (!state.selectedObject) return state
-      const logo3D = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: { ...state.currentEffect, logo3D: { depth: 30, bevel: 10, lighting: 'top-right' } }
-      }
-      const newObjects = [...state.objects, logo3D]
-      return { ...state, objects: newObjects, selectedObjects: [logo3D.id], selectedObject: logo3D }
-    }
+    case 'APPLY_LOGO_3D':
+      return mergeEffect(state, {
+        type: 'logo3D',
+        logo3D: { depth: 30, bevel: 10, lighting: 'top-right', angle: 45, ...(state.currentEffect.logo3D || {}) },
+      })
 
     case 'APPLY_POWER_SHAPE': {
       const { shapeType, x, y, width, height, points, innerRadius, rotation: rot } = action.payload
@@ -1179,154 +1177,73 @@ function appReducer(state, action) {
       return { ...state, objects: newObjects, selectedObjects: [withLogo.id], selectedObject: withLogo }
     }
 
-    case 'APPLY_MULTI_OUTLINE': {
-      if (!state.selectedObject) return state
-      const multiOutline = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: { ...state.currentEffect, multiOutline: { count: 3, spacing: 2, color: '#000000' } }
-      }
-      const newObjects = [...state.objects, multiOutline]
-      return { ...state, objects: newObjects, selectedObjects: [multiOutline.id], selectedObject: multiOutline }
-    }
+    case 'APPLY_MULTI_OUTLINE':
+      return mergeEffect(state, {
+        type: 'multiOutline',
+        multiOutline: { count: 3, spacing: 2, color: '#000000', ...(state.currentEffect.multiOutline || {}) },
+      })
 
-    case 'APPLY_MULTI_INLINE': {
-      if (!state.selectedObject) return state
-      const multiInline = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: { ...state.currentEffect, multiInline: { count: 3, spacing: 2, color: '#000000' } }
-      }
-      const newObjects = [...state.objects, multiInline]
-      return { ...state, objects: newObjects, selectedObjects: [multiInline.id], selectedObject: multiInline }
-    }
+    case 'APPLY_MULTI_INLINE':
+      return mergeEffect(state, {
+        type: 'multiInline',
+        multiInline: { count: 3, spacing: 2, color: '#000000', ...(state.currentEffect.multiInline || {}) },
+      })
 
-    case 'APPLY_BLOCK_SHADOW': {
-      if (!state.selectedObject) return state
-      const blockShadow = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: { ...state.currentEffect, blockShadow: { offsetX: 5, offsetY: 5, blur: 0, color: '#000000' } }
-      }
-      const newObjects = [...state.objects, blockShadow]
-      return { ...state, objects: newObjects, selectedObjects: [blockShadow.id], selectedObject: blockShadow }
-    }
+    case 'APPLY_BLOCK_SHADOW':
+      return mergeEffect(state, {
+        type: 'blockShadow',
+        blockShadow: { offsetX: 5, offsetY: 5, blur: 0, color: '#000000', ...(state.currentEffect.blockShadow || {}) },
+      })
 
-    case 'APPLY_DROP_SHADOW': {
-      if (!state.selectedObject) return state
-      const dropShadow = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: { ...state.currentEffect, dropShadow: { offsetX: 3, offsetY: 3, blur: 5, color: '#000000' } }
-      }
-      const newObjects = [...state.objects, dropShadow]
-      return { ...state, objects: newObjects, selectedObjects: [dropShadow.id], selectedObject: dropShadow }
-    }
+    case 'APPLY_DROP_SHADOW':
+      return mergeEffect(state, {
+        type: 'dropShadow',
+        dropShadow: { offsetX: 3, offsetY: 3, blur: 5, color: '#000000', ...(state.currentEffect.dropShadow || {}) },
+      })
 
-    case 'APPLY_SOFT_SHADOW': {
-      if (!state.selectedObject) return state
-      const softShadow = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: { ...state.currentEffect, softShadow: { offsetX: 2, offsetY: 2, blur: 10, color: '#000000' } }
-      }
-      const newObjects = [...state.objects, softShadow]
-      return { ...state, objects: newObjects, selectedObjects: [softShadow.id], selectedObject: softShadow }
-    }
+    case 'APPLY_SOFT_SHADOW':
+      return mergeEffect(state, {
+        type: 'softShadow',
+        softShadow: { offsetX: 2, offsetY: 2, blur: 10, color: '#000000', ...(state.currentEffect.softShadow || {}) },
+      })
 
-    case 'APPLY_GLOW': {
-      if (!state.selectedObject) return state
-      const glow = {
-        ...state.selectedObject,
-        id: generateId(),
-        effect: { ...state.currentEffect, glow: { radius: 10, color: '#ff8000', intensity: 50 } }
-      }
-      const newObjects = [...state.objects, glow]
-      return { ...state, objects: newObjects, selectedObjects: [glow.id], selectedObject: glow }
-    }
+    case 'APPLY_GLOW':
+      return mergeEffect(state, {
+        type: 'glow',
+        glow: { radius: 10, color: '#ff8000', intensity: 50, ...(state.currentEffect.glow || {}) },
+      })
 
-    case 'APPLY_WARP_CIRCLE': {
-      if (!state.selectedObject) return state
-      const warped = {
-        ...state.selectedObject,
-        id: generateId(),
-        warpType: 'circle',
-        warpIntensity: state.warpSettings.intensity,
-      }
-      const newObjects = [...state.objects, warped]
-      return { ...state, objects: newObjects, selectedObjects: [warped.id], selectedObject: warped }
-    }
+    case 'APPLY_WARP_CIRCLE':
+      return mergeWarp(state, 'circle')
 
-    case 'APPLY_WARP_COONS': {
-      if (!state.selectedObject) return state
-      const warped = {
-        ...state.selectedObject,
-        id: generateId(),
-        warpType: 'coons',
-        warpIntensity: state.warpSettings.intensity,
-      }
-      const newObjects = [...state.objects, warped]
-      return { ...state, objects: newObjects, selectedObjects: [warped.id], selectedObject: warped }
-    }
+    case 'APPLY_WARP_COONS':
+      return mergeWarp(state, 'coons')
 
-    case 'APPLY_WARP_FLAG': {
-      if (!state.selectedObject) return state
-      const warped = {
-        ...state.selectedObject,
-        id: generateId(),
-        warpType: 'flag',
-        warpIntensity: state.warpSettings.intensity,
-      }
-      const newObjects = [...state.objects, warped]
-      return { ...state, objects: newObjects, selectedObjects: [warped.id], selectedObject: warped }
-    }
+    case 'APPLY_WARP_FLAG':
+      return mergeWarp(state, 'flag')
 
-    case 'APPLY_WARP_PERSPECTIVE': {
-      if (!state.selectedObject) return state
-      const warped = {
-        ...state.selectedObject,
-        id: generateId(),
-        warpType: 'perspective',
-        warpIntensity: state.warpSettings.intensity,
-      }
-      const newObjects = [...state.objects, warped]
-      return { ...state, objects: newObjects, selectedObjects: [warped.id], selectedObject: warped }
-    }
+    case 'APPLY_WARP_PERSPECTIVE':
+      return mergeWarp(state, 'perspective')
 
-    case 'APPLY_WARP_SKIRT': {
-      if (!state.selectedObject) return state
-      const warped = {
-        ...state.selectedObject,
-        id: generateId(),
-        warpType: 'skirt',
-        warpIntensity: state.warpSettings.intensity,
-      }
-      const newObjects = [...state.objects, warped]
-      return { ...state, objects: newObjects, selectedObjects: [warped.id], selectedObject: warped }
-    }
+    case 'APPLY_WARP_SKIRT':
+      return mergeWarp(state, 'skirt')
 
-    case 'APPLY_WARP_TRAPEZOID': {
-      if (!state.selectedObject) return state
-      const warped = {
-        ...state.selectedObject,
-        id: generateId(),
-        warpType: 'trapezoid',
-        warpIntensity: state.warpSettings.intensity,
-      }
-      const newObjects = [...state.objects, warped]
-      return { ...state, objects: newObjects, selectedObjects: [warped.id], selectedObject: warped }
-    }
+    case 'APPLY_WARP_TRAPEZOID':
+      return mergeWarp(state, 'trapezoid')
 
-    case 'APPLY_WARP_WAVE': {
+    case 'APPLY_WARP_WAVE':
+      return mergeWarp(state, 'wave')
+
+    case 'CLEAR_WARP': {
       if (!state.selectedObject) return state
-      const warped = {
-        ...state.selectedObject,
-        id: generateId(),
-        warpType: 'wave',
-        warpIntensity: state.warpSettings.intensity,
-      }
-      const newObjects = [...state.objects, warped]
-      return { ...state, objects: newObjects, selectedObjects: [warped.id], selectedObject: warped }
+      const objects = state.objects.map(o => {
+        if (o.id !== state.selectedObject.id) return o
+        const next = { ...o }
+        delete next.warpType
+        delete next.warpIntensity
+        return next
+      })
+      return { ...state, objects, selectedObject: objects.find(o => o.id === state.selectedObject.id) }
     }
 
     default:
@@ -1442,7 +1359,9 @@ export function AppProvider({ children }) {
     updateObject: useCallback((id, updates) => dispatch({ type: 'UPDATE_OBJECT', payload: { id, updates } }), []),
     setFill: useCallback((fill) => dispatch({ type: 'SET_FILL', payload: fill }), []),
     setStroke: useCallback((stroke) => dispatch({ type: 'SET_STROKE', payload: stroke }), []),
-    setEffect: useCallback((effect) => dispatch({ type: 'SET_EFFECT', payload: effect }), []),
+    setEffect: useCallback((effect) => dispatch({ type: 'UPDATE_EFFECT', payload: effect }), []),
+    clearEffect: useCallback(() => dispatch({ type: 'CLEAR_EFFECT' }), []),
+    clearWarp: useCallback(() => dispatch({ type: 'CLEAR_WARP' }), []),
     setTextSettings: useCallback((settings) => dispatch({ type: 'SET_TEXT_SETTINGS', payload: settings }), []),
     setParagraphSettings: useCallback((settings) => dispatch({ type: 'SET_PARAGRAPH_SETTINGS', payload: settings }), []),
     setCloneSettings: useCallback((settings) => dispatch({ type: 'SET_CLONE_SETTINGS', payload: settings }), []),

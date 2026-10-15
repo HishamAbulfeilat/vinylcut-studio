@@ -207,15 +207,17 @@ const Canvas = forwardRef((props, ref) => {
     return () => resizeObserver.disconnect()
   }, [])
 
-  const renderShape = (obj) => {
+  const renderShape = (obj, at) => {
     const scale = state.zoom
-    const left = obj.x * scale + state.panX * scale
-    const top = obj.y * scale + state.panY * scale
+    const left = at ? at.left : obj.x * scale + state.panX * scale
+    const top = at ? at.top : obj.y * scale + state.panY * scale
     const width = obj.width * scale
     const height = obj.height * scale
 
     const fillColor = obj.fill?.type === 'solid' ? obj.fill.color
-      : obj.fill?.type === 'gradient' ? `linear-gradient(135deg, ${obj.fill.color}, ${obj.fill.color}88)`
+      : obj.fill?.type === 'gradient' ? `linear-gradient(135deg, ${obj.fill.color}, ${obj.fill.color2 || (obj.fill.color || '#000') + '88'})`
+      : obj.fill?.type === 'spot' ? ((obj.fill.spotColor || '#ff0000') + '66')
+      : obj.fill?.type === 'logo' ? 'repeating-conic-gradient(#999 0 25%, #ddd 0 50%)'
       : 'transparent'
 
     const strokeStr = obj.stroke?.width > 0 ? `${obj.stroke.width}px ${obj.stroke.style || 'solid'} ${obj.stroke.color}` : 'none'
@@ -517,6 +519,252 @@ const Canvas = forwardRef((props, ref) => {
     }
   }
 
+  // ------------------------------------------------------------------
+  // Live effects + warp rendering.
+  // Effects are layered copies of the same shape (extrusion stacks,
+  // shadows, glows, mirrored reflections). Warp slices the object into
+  // vertical strips and displaces/scales each strip, which is a genuine
+  // (if discrete) implementation of the classic warp mappings.
+  // ------------------------------------------------------------------
+
+  const shiftColor = (hex, factor) => {
+    if (!hex || typeof hex !== 'string' || hex[0] !== '#' || hex.length < 7) return hex
+    const n = parseInt(hex.slice(1, 7), 16)
+    const r = Math.min(255, Math.round(((n >> 16) & 255) * factor))
+    const g = Math.min(255, Math.round(((n >> 8) & 255) * factor))
+    const b = Math.min(255, Math.round((n & 255) * factor))
+    return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`
+  }
+
+  const renderEffectLayers = (obj) => {
+    const e = obj.effect
+    if (!e || !Object.keys(e).length) return null
+    const s = state.zoom || 1
+    const layers = []
+
+    // --- 3D extrusion / Logo 3D -------------------------------------
+    const d3 = e.threeD || e.logo3D
+    if (d3) {
+      const depth = Math.max(1, Math.min(60, Math.round(d3.depth || 20)))
+      const angle = ((d3.angle != null ? d3.angle : 45) * Math.PI) / 180
+      const ux = Math.cos(angle)
+      const uy = Math.sin(angle)
+      const baseFill = obj.fill?.color || '#888888'
+      const lightFromTopLeft = (d3.lighting || 'top-left').indexOf('top') === 0
+      for (let i = depth; i >= 1; i--) {
+        const t = i / depth
+        // closer to the original body = lighter, far edge = darkest
+        const factor = lightFromTopLeft ? 0.35 + 0.5 * (1 - t) : 0.25 + 0.55 * (1 - t)
+        layers.push({ key: `x3d-${i}`, color: shiftColor(baseFill, factor), dx: (ux * i) / s, dy: (uy * i) / s })
+      }
+    }
+
+    // --- Block / drop / soft shadows --------------------------------
+    const shadow = e.blockShadow || e.dropShadow || e.softShadow
+    if (shadow) {
+      const blur = e.softShadow ? (e.softShadow.blur || 0)
+        : e.dropShadow ? (e.dropShadow.blur || 0)
+        : (e.blockShadow?.blur || 0)
+      layers.push({
+        key: 'shadow',
+        color: shadow.color || '#000000',
+        dx: (shadow.offsetX || 0) / s,
+        dy: (shadow.offsetY || 0) / s,
+        blur,
+        opacity: 1,
+      })
+    }
+
+    // --- Multi-outline / Multi-inline -------------------------------
+    const multi = e.multiOutline || e.multiInline
+    if (multi) {
+      const count = Math.max(1, Math.min(12, multi.count || 3))
+      for (let i = count; i >= 1; i--) {
+        layers.push({ key: `mo-${i}`, color: multi.color || '#000', outlineWidth: (multi.spacing || 2) * i * 2, noFill: true })
+      }
+    }
+
+    // --- Outline (stroke the contour) -------------------------------
+    if (e.outline) {
+      layers.push({ key: 'outline', color: e.outline.color || '#000', outlineWidth: (e.outline.width || 2) * 2 })
+    }
+
+    // --- Inner outline (stroked copy clipped to the shape box) ------
+    if (e.innerOutline) {
+      layers.push({ key: 'innerOutline', color: e.innerOutline.color || '#000', outlineWidth: (e.innerOutline.width || 2) * 2, clip: true })
+    }
+
+    // --- Glow (blurred, coloured silhouette) ------------------------
+    if (e.glow) {
+      const r = e.glow.radius || 10
+      const passes = Math.max(1, Math.round((e.glow.intensity || 50) / 25))
+      layers.push({
+        key: 'glow',
+        color: e.glow.color || '#ff8000',
+        glowRadius: r,
+        glowPasses: passes,
+        coloredSilhouette: true,
+      })
+    }
+
+    // --- Tint map (colour overlay, blended) -------------------------
+    if (e.tintMap) {
+      layers.push({ key: 'tint', color: e.tintMap.color || '#ff0000', blend: 'multiply', opacity: (e.tintMap.intensity || 50) / 100, clip: true })
+    }
+
+    // --- Fire (gradient overlay, blended) ---------------------------
+    if (e.fire) {
+      layers.push({ key: 'fire', gradient: [e.fire.color1 || '#ff0000', e.fire.color2 || '#ffff00'], blend: 'overlay', opacity: 0.75, clip: true })
+    }
+
+    // --- Reflect (mirrored copy below) ------------------------------
+    if (e.reflect) {
+      layers.push({
+        key: 'reflect',
+        color: obj.fill?.color || '#888888',
+        reflect: true,
+        opacity: Math.max(0.05, (e.reflect.opacity || 50) / 100) * 0.85,
+        blur: (e.reflect.blur || 0),
+      })
+    }
+
+    if (!layers.length) return null
+
+    const boxStyle = (layer) => ({
+      position: 'absolute',
+      left: obj.x * s + state.panX * s,
+      top: obj.y * s + state.panY * s,
+      width: Math.abs((obj.width || 0) * s),
+      height: Math.abs((obj.height || 0) * s),
+      overflow: layer.clip ? 'hidden' : 'visible',
+      pointerEvents: 'none',
+      opacity: layer.opacity != null ? layer.opacity : 1,
+      mixBlendMode: layer.blend,
+      filter: layer.glowRadius
+        ? Array.from({ length: layer.glowPasses || 1 }, () => `drop-shadow(0 0 ${layer.glowRadius}px ${layer.color})`).join(' ')
+        : layer.blur ? `blur(${layer.blur}px)` : undefined,
+      zIndex: 0,
+    })
+
+    return layers.map(layer => {
+      let copy = obj
+      let atY = 0
+      if (layer.reflect) {
+        copy = { ...obj, scaleY: -(obj.scaleY || 1) }
+        atY = (obj.height || 0) * s
+      } else if (layer.outlineWidth) {
+        copy = { ...obj, fill: layer.noFill ? { type: 'none' } : obj.fill, stroke: { ...(obj.stroke || {}), color: layer.color, width: layer.outlineWidth } }
+      } else if (layer.coloredSilhouette) {
+        // keep the shape's own look; the filter produces the glow
+      } else if (layer.gradient) {
+        copy = { ...obj, fill: { type: 'gradient', color: layer.gradient[0], color2: layer.gradient[1] }, stroke: { width: 0 } }
+      } else {
+        copy = { ...obj, fill: { type: 'solid', color: layer.color }, stroke: { width: 0 } }
+      }
+      return (
+        <div key={layer.key} style={boxStyle(layer)}>
+          {renderShape(copy, { left: layer.dx ? layer.dx * s : 0, top: atY + (layer.dy ? layer.dy * s : 0) })}
+        </div>
+      )
+    })
+  }
+
+  // Displacement function per warp type. u = 0..1 across the object,
+  // returns a vertical offset (fraction of height) and a vertical scale.
+  const warpFn = (type, amount) => {
+    const a = amount / 100
+    switch (type) {
+      case 'wave':
+        return (u) => ({ ty: Math.sin(u * Math.PI * 2) * a * 0.35, sy: 1 })
+      case 'flag': {
+        const amp = (u) => a * 0.5 * (0.35 + 0.65 * u)
+        return (u) => ({ ty: Math.sin(u * Math.PI * 3) * amp(u), sy: 1 })
+      }
+      case 'circle': {
+        // bulge: taller in the middle, shrinking towards the edges
+        return (u) => {
+          const d = (u - 0.5) * 2 // -1..1
+          return { ty: 0, sy: 1 + a * 0.6 * Math.sqrt(Math.max(0, 1 - d * d)) - a * 0.3 }
+        }
+      }
+      case 'trapezoid':
+        return (u) => ({ ty: 0, sy: 1 + a * 0.8 * (u - 0.5) })
+      case 'perspective':
+        return (u) => ({ ty: a * 0.25 * (u - 0.5), sy: 1 + a * 1.2 * (u - 0.5) })
+      case 'skirt':
+        return (u) => {
+          const d = (u - 0.5) * 2
+          return { ty: a * 0.6 * d * d, sy: 1 + a * 0.5 * d * d }
+        }
+      case 'coons':
+        return (u) => {
+          const v = (u - 0.5) * 2
+          return { ty: a * 0.4 * Math.sin(u * Math.PI) * v * 0 + a * 0.35 * (u * u - u), sy: 1 }
+        }
+      default:
+        return () => ({ ty: 0, sy: 1 })
+    }
+  }
+
+  const renderWarped = (obj) => {
+    if (!obj.warpType) return renderShape(obj)
+    const fn = warpFn(obj.warpType, obj.warpIntensity || 50)
+    const s = state.zoom || 1
+    const STRIPS = 24
+    const stripW = 100 / STRIPS
+    const boxLeft = obj.x * s + state.panX * s
+    const boxTop = obj.y * s + state.panY * s
+    const boxW = Math.abs((obj.width || 0) * s)
+    const boxH = Math.abs((obj.height || 0) * s)
+    const inner = renderShape({ ...obj, warpType: undefined, warpIntensity: undefined }, { left: 0, top: 0 })
+
+    const strips = []
+    for (let i = 0; i < STRIPS; i++) {
+      const u = (i + 0.5) / STRIPS
+      const { ty, sy } = fn(u)
+      strips.push(
+        <div
+          key={i}
+          style={{
+            position: 'absolute',
+            left: `${i * stripW}%`,
+            width: `${stripW + 0.5}%`,
+            top: 0,
+            height: '100%',
+            overflow: 'hidden',
+            transform: `translateY(${ty * 100}%) scaleY(${sy})`,
+            transformOrigin: 'center',
+          }}
+        >
+          <div style={{ position: 'absolute', left: `${-i * 100}%`, width: `${STRIPS * 100}%`, top: 0, height: '100%' }}>
+            {inner}
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          left: boxLeft,
+          top: boxTop,
+          width: boxW,
+          height: boxH,
+          pointerEvents: 'none',
+        }}
+      >
+        {strips}
+      </div>
+    )
+  }
+
+  const renderObject = (obj) => (
+    <>
+      {renderEffectLayers(obj)}
+      {renderWarped(obj)}
+    </>
+  )
+
   const renderNodeEditOverlay = () => {
     if (!nodeEditMode || !state.selectedObject) return null
     const obj = state.selectedObject
@@ -618,7 +866,7 @@ const Canvas = forwardRef((props, ref) => {
           )}
           {state.objects.map(obj => (
             <React.Fragment key={obj.id}>
-              {renderShape(obj)}
+              {renderObject(obj)}
               {state.selectedObjects.includes(obj.id) && (
                 <div className="selection-box" style={{
                   position: 'absolute',
