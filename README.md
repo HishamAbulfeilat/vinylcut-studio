@@ -210,3 +210,11 @@ vinylcut-studio/
 ├── vite.config.js
 └── README.md
 ```
+
+## Repository
+
+<https://github.com/HishamAbulfeilat/vinylcut-studio>
+
+## License
+
+MIT — see [LICENSE](LICENSE).
