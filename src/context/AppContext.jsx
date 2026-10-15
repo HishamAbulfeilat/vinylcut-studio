@@ -1,4 +1,9 @@
 import React, { createContext, useContext, useReducer, useCallback } from 'react'
+import * as polygonClippingNS from 'polygon-clipping'
+
+// polygon-clipping ships a default export (an object of ops) at runtime; named
+// exports exist only in the type definitions. Normalise both to one object.
+const polygonClipping = polygonClippingNS.default || polygonClippingNS
 
 const AppContext = createContext()
 
@@ -65,6 +70,105 @@ const initialState = {
 
 function generateId() {
   return Math.random().toString(36).substr(2, 9)
+}
+
+/* ------------------------------------------------------------------ *
+ * Real boolean geometry helpers (polygon-clipping).
+ * Geometry is expressed as a MultiPolygon: [ [ ring, hole, ... ], ... ]
+ * where each ring is [ [x, y], ... ] in absolute canvas coordinates.
+ * ------------------------------------------------------------------ */
+
+function rotatePoint(px, py, cx, cy, deg) {
+  const r = (deg || 0) * Math.PI / 180
+  const c = Math.cos(r)
+  const s = Math.sin(r)
+  const dx = px - cx
+  const dy = py - cy
+  return [cx + dx * c - dy * s, cy + dx * s + dy * c]
+}
+
+// Convert a shape object into a MultiPolygon in absolute coordinates.
+// Objects that already carry `.rings` (results of a previous boolean op) reuse them.
+function objectToMultiPolygon(obj) {
+  if (obj.rings && obj.rings.length) return obj.rings
+
+  const x = obj.x || 0
+  const y = obj.y || 0
+  const w = obj.width || 0
+  const h = obj.height || 0
+  const cx = x + w / 2
+  const cy = y + h / 2
+  const rx = w / 2
+  const ry = h / 2
+  let pts = []
+
+  if (obj.type === 'ellipse' || obj.type === 'powerCircle') {
+    const N = 64
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2
+      pts.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry])
+    }
+  } else if (obj.type === 'polygon' || obj.type === 'powerPolygon') {
+    const n = Math.max(3, obj.points || 5)
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 - Math.PI / 2
+      pts.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry])
+    }
+  } else if (obj.type === 'star' || obj.type === 'powerStar') {
+    const n = Math.max(2, obj.points || 5)
+    const inner = (obj.innerRadius || 50) / 100
+    for (let i = 0; i < n * 2; i++) {
+      const a = (i / (n * 2)) * Math.PI * 2 - Math.PI / 2
+      const rr = i % 2 === 0 ? 1 : inner
+      pts.push([cx + Math.cos(a) * rx * rr, cy + Math.sin(a) * ry * rr])
+    }
+  } else {
+    // rect and anything else -> bounding box
+    pts = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+  }
+
+  const rot = obj.rotation || 0
+  if (rot) pts = pts.map(([px, py]) => rotatePoint(px, py, cx, cy, rot))
+
+  return [[pts]]
+}
+
+// Turn a MultiPolygon into a relocatable object piece:
+// pathData is relative to the geometry's own bounding box.
+function multiPolygonToShape(mp) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+  for (const poly of mp) {
+    for (const ring of poly) {
+      for (const [px, py] of ring) {
+        if (px < minX) minX = px
+        if (px > maxX) maxX = px
+        if (py < minY) minY = py
+        if (py > maxY) maxY = py
+      }
+    }
+  }
+  if (!isFinite(minX)) return null
+
+  const parts = []
+  for (const poly of mp) {
+    for (const ring of poly) {
+      ring.forEach(([px, py], i) => {
+        const rx = +(px - minX).toFixed(3)
+        const ry = +(py - minY).toFixed(3)
+        parts.push(`${i === 0 ? 'M' : 'L'}${rx},${ry}`)
+      })
+      parts.push('Z')
+    }
+  }
+
+  return {
+    pathData: parts.join(' '),
+    rings: mp,
+    x: minX,
+    y: minY,
+    width: Math.max(maxX - minX, 0.01),
+    height: Math.max(maxY - minY, 0.01),
+  }
 }
 
 function appReducer(state, action) {
@@ -382,6 +486,16 @@ function appReducer(state, action) {
       return { ...state, objects: newObjects, selectedObject: updatedObj }
     }
 
+    case 'SET_SELECTION': {
+      const ids = action.payload.ids || []
+      const objs = state.objects.filter(o => ids.includes(o.id))
+      return {
+        ...state,
+        selectedObjects: ids,
+        selectedObject: objs.length ? objs[objs.length - 1] : null,
+      }
+    }
+
     case 'ADD_OBJECT': {
       const newObj = {
         id: generateId(),
@@ -565,60 +679,110 @@ function appReducer(state, action) {
     }
 
     case 'APPLY_WELD': {
-      if (state.selectedObjects.length < 2) return state
-      const welded = {
-        id: generateId(),
-        type: 'path',
-        x: Math.min(...state.objects.filter(o => state.selectedObjects.includes(o.id)).map(o => o.x || 0)),
-        y: Math.min(...state.objects.filter(o => state.selectedObjects.includes(o.id)).map(o => o.y || 0)),
-        width: 100,
-        height: 100,
-        fill: { ...state.currentFill },
-        pathData: 'M0,0 L100,0 L100,100 L0,100 Z',
+      const weldObjs = state.objects.filter(o => state.selectedObjects.includes(o.id))
+      if (weldObjs.length < 2) return state
+      try {
+        const geoms = weldObjs.map(objectToMultiPolygon)
+        const shape = multiPolygonToShape(polygonClipping.union(geoms[0], ...geoms.slice(1)))
+        if (!shape) return state
+        const welded = {
+          id: generateId(),
+          type: 'path',
+          ...shape,
+          fill: { ...(weldObjs[0].fill || state.currentFill) },
+          stroke: { ...(weldObjs[0].stroke || state.currentStroke) },
+          opacity: weldObjs[0].opacity || 100,
+        }
+        const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
+        newObjects.push(welded)
+        return { ...state, objects: newObjects, selectedObjects: [welded.id], selectedObject: welded }
+      } catch (e) {
+        return state
       }
-      const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
-      newObjects.push(welded)
-      return { ...state, objects: newObjects, selectedObjects: [welded.id], selectedObject: welded }
     }
 
     case 'APPLY_PUNCH_OUT': {
-      if (state.selectedObjects.length < 2) return state
-      const front = state.objects.find(o => o.id === state.selectedObjects[0])
-      const back = state.objects.find(o => o.id === state.selectedObjects[1])
-      if (!front || !back) return state
-      const punched = { ...back, id: generateId(), punchPath: front }
-      const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
-      newObjects.push(punched)
-      return { ...state, objects: newObjects, selectedObjects: [punched.id], selectedObject: punched }
+      // Z-order: the topmost selected object is the "punch"; it is subtracted
+      // from the union of everything selected underneath it.
+      const punchObjs = state.objects.filter(o => state.selectedObjects.includes(o.id))
+      if (punchObjs.length < 2) return state
+      const punchFront = punchObjs[punchObjs.length - 1]
+      const punchBehind = punchObjs.slice(0, -1)
+      try {
+        let base = objectToMultiPolygon(punchBehind[0])
+        for (const o of punchBehind.slice(1)) base = polygonClipping.union(base, objectToMultiPolygon(o))
+        const shape = multiPolygonToShape(polygonClipping.difference(base, objectToMultiPolygon(punchFront)))
+        if (!shape) return state
+        const punched = {
+          id: generateId(),
+          type: 'path',
+          ...shape,
+          fill: { ...(punchBehind[0].fill || state.currentFill) },
+          stroke: { ...(punchBehind[0].stroke || state.currentStroke) },
+          opacity: punchBehind[0].opacity || 100,
+        }
+        const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
+        newObjects.push(punched)
+        return { ...state, objects: newObjects, selectedObjects: [punched.id], selectedObject: punched }
+      } catch (e) {
+        return state
+      }
     }
 
     case 'APPLY_TRIM': {
-      if (state.selectedObjects.length < 2) return state
-      const front = state.objects.find(o => o.id === state.selectedObjects[0])
-      const back = state.objects.find(o => o.id === state.selectedObjects[1])
-      if (!front || !back) return state
-      const trimmed = { ...back, id: generateId(), trimPath: front }
-      const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
-      newObjects.push(trimmed)
-      return { ...state, objects: newObjects, selectedObjects: [trimmed.id], selectedObject: trimmed }
+      // Subtract the topmost object from each of the others, keeping every
+      // remaining piece as its own object (this is what "Trim" does).
+      const trimObjs = state.objects.filter(o => state.selectedObjects.includes(o.id))
+      if (trimObjs.length < 2) return state
+      const trimFront = trimObjs[trimObjs.length - 1]
+      const trimRest = trimObjs.slice(0, -1)
+      try {
+        const frontGeo = objectToMultiPolygon(trimFront)
+        const pieces = []
+        for (const o of trimRest) {
+          const shape = multiPolygonToShape(polygonClipping.difference(objectToMultiPolygon(o), frontGeo))
+          if (!shape) continue
+          pieces.push({
+            id: generateId(),
+            type: 'path',
+            ...shape,
+            fill: { ...(o.fill || state.currentFill) },
+            stroke: { ...(o.stroke || state.currentStroke) },
+            opacity: o.opacity || 100,
+          })
+        }
+        if (!pieces.length) return state
+        const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
+        newObjects.push(...pieces)
+        return { ...state, objects: newObjects, selectedObjects: pieces.map(o => o.id), selectedObject: pieces[0] }
+      } catch (e) {
+        return state
+      }
     }
 
     case 'APPLY_COOKIE_CUT': {
-      if (state.selectedObjects.length < 2) return state
-      const objects = state.objects.filter(o => state.selectedObjects.includes(o.id))
-      const common = {
-        id: generateId(),
-        type: 'path',
-        x: Math.min(...objects.map(o => o.x || 0)),
-        y: Math.min(...objects.map(o => o.y || 0)),
-        width: 100,
-        height: 100,
-        fill: { ...state.currentFill },
-        pathData: 'M0,0 L100,0 L100,100 L0,100 Z',
+      // Keep only the area common to every selected object.
+      const cookieObjs = state.objects.filter(o => state.selectedObjects.includes(o.id))
+      if (cookieObjs.length < 2) return state
+      try {
+        let acc = objectToMultiPolygon(cookieObjs[0])
+        for (const o of cookieObjs.slice(1)) acc = polygonClipping.intersection(acc, objectToMultiPolygon(o))
+        const shape = multiPolygonToShape(acc)
+        if (!shape) return state
+        const common = {
+          id: generateId(),
+          type: 'path',
+          ...shape,
+          fill: { ...(cookieObjs[0].fill || state.currentFill) },
+          stroke: { ...(cookieObjs[0].stroke || state.currentStroke) },
+          opacity: cookieObjs[0].opacity || 100,
+        }
+        const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
+        newObjects.push(common)
+        return { ...state, objects: newObjects, selectedObjects: [common.id], selectedObject: common }
+      } catch (e) {
+        return state
       }
-      const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
-      newObjects.push(common)
-      return { ...state, objects: newObjects, selectedObjects: [common.id], selectedObject: common }
     }
 
     case 'APPLY_OUTLINE': {
@@ -1160,6 +1324,7 @@ export function AppProvider({ children }) {
     setTool: useCallback((toolId) => dispatch({ type: 'SET_TOOL', payload: { toolId } }), []),
     setTab: useCallback((tab) => dispatch({ type: 'SET_TAB', payload: { tab } }), []),
     selectAll: useCallback(() => dispatch({ type: 'SELECT_ALL' }), []),
+    setSelection: useCallback((ids) => dispatch({ type: 'SET_SELECTION', payload: { ids } }), []),
     deleteSelected: useCallback(() => dispatch({ type: 'DELETE_SELECTED' }), []),
     duplicateSelected: useCallback(() => dispatch({ type: 'DUPLICATE_SELECTED' }), []),
     copySelected: useCallback(() => dispatch({ type: 'COPY_SELECTED' }), []),

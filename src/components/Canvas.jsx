@@ -14,7 +14,7 @@ const Canvas = forwardRef((props, ref) => {
   const [panStart, setPanStart] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
-  const [dragObjStart, setDragObjStart] = useState({ x: 0, y: 0 })
+  const [dragObjStart, setDragObjStart] = useState({})
   const [nodeEditMode, setNodeEditMode] = useState(false)
 
   const getCanvasCoords = useCallback((e) => {
@@ -42,12 +42,26 @@ const Canvas = forwardRef((props, ref) => {
                coords.y >= obj.y && coords.y <= obj.y + obj.height
       })
       if (clickedObj) {
-        dispatch({ type: 'UPDATE_PROPERTY', payload: { property: 'selectedObject', value: clickedObj } })
+        let ids
+        if (e.shiftKey) {
+          ids = state.selectedObjects.includes(clickedObj.id)
+            ? state.selectedObjects.filter(id => id !== clickedObj.id)
+            : [...state.selectedObjects, clickedObj.id]
+        } else if (state.selectedObjects.includes(clickedObj.id)) {
+          ids = state.selectedObjects
+        } else {
+          ids = [clickedObj.id]
+        }
+        actions.setSelection(ids)
         setIsDragging(true)
         setDragStart(coords)
-        setDragObjStart({ x: clickedObj.x, y: clickedObj.y })
+        const starts = {}
+        state.objects.filter(o => ids.includes(o.id)).forEach(o => {
+          starts[o.id] = { x: o.x || 0, y: o.y || 0 }
+        })
+        setDragObjStart(starts)
       } else {
-        dispatch({ type: 'UPDATE_PROPERTY', payload: { property: 'selectedObject', value: null } })
+        actions.setSelection([])
       }
       return
     }
@@ -58,7 +72,7 @@ const Canvas = forwardRef((props, ref) => {
                coords.y >= obj.y && coords.y <= obj.y + obj.height
       })
       if (clickedObj) {
-        dispatch({ type: 'UPDATE_PROPERTY', payload: { property: 'selectedObject', value: clickedObj } })
+        actions.setSelection([clickedObj.id])
         setNodeEditMode(true)
       }
       return
@@ -70,17 +84,19 @@ const Canvas = forwardRef((props, ref) => {
       setDrawStart(coords)
       setCurrentPos(coords)
     }
-  }, [state.activeTool, state.objects, state.zoom, state.panX, state.panY, getCanvasCoords, dispatch])
+  }, [state.activeTool, state.objects, state.zoom, state.panX, state.panY, state.selectedObjects, getCanvasCoords, actions, dispatch])
 
   const handleMouseMove = useCallback((e) => {
     const coords = getCanvasCoords(e)
     actions.setCursorPos(coords)
 
     if (isPanning) return
-    if (isDragging && state.selectedObject) {
+    if (isDragging && Object.keys(dragObjStart).length) {
       const dx = coords.x - dragStart.x
       const dy = coords.y - dragStart.y
-      dispatch({ type: 'UPDATE_OBJECT', payload: { id: state.selectedObject.id, updates: { x: dragObjStart.x + dx, y: dragObjStart.y + dy } } })
+      Object.entries(dragObjStart).forEach(([id, start]) => {
+        dispatch({ type: 'UPDATE_OBJECT', payload: { id, updates: { x: start.x + dx, y: start.y + dy } } })
+      })
       return
     }
     if (isDrawing) setCurrentPos(coords)
@@ -440,6 +456,31 @@ const Canvas = forwardRef((props, ref) => {
               <text x={width / 2} y={height / 2} textAnchor="middle" fill={obj.color || '#000'} fontSize={10 * scale}>
                 {obj.value}{obj.units || 'mm'}
               </text>
+            </svg>
+          </div>
+        )
+
+      case 'path':
+        return (
+          <div style={{
+            position: 'absolute',
+            left, top, width, height,
+            transform: `rotate(${obj.rotation || 0}deg)`,
+            opacity: (obj.opacity || 100) / 100,
+          }}>
+            <svg
+              width={width}
+              height={height}
+              viewBox={`0 0 ${obj.width} ${obj.height}`}
+              preserveAspectRatio="none"
+            >
+              <path
+                d={obj.pathData}
+                fill={fillColor}
+                stroke={obj.stroke?.width > 0 ? obj.stroke.color : 'none'}
+                strokeWidth={obj.stroke?.width || 0}
+                strokeLinejoin="round"
+              />
             </svg>
           </div>
         )
