@@ -6,45 +6,84 @@ import PropertyPanel from './components/PropertyPanel'
 import StatusBar from './components/StatusBar'
 import TabBar from './components/TabBar'
 import Dialog from './components/Dialog'
+import VinylSpooler from './components/VinylSpooler'
+import ContourCutWizard from './components/ContourCutWizard'
+import AlignmentDialog from './components/AlignmentDialog'
+import GradientEditor from './components/GradientEditor'
+import TextureLibrary from './components/TextureLibrary'
+import StepRepeatDialog from './components/StepRepeatDialog'
 import { AppProvider, useApp } from './context/AppContext'
 import './App.css'
 
 const tools = [
+  // Selection & Navigation
   { id: 'select', name: 'Select', icon: '⬚', shortcut: 'V' },
   { id: 'node', name: 'Node Edit', icon: '◇', shortcut: 'N' },
   { id: 'pan', name: 'Pan', icon: '✋', shortcut: 'H' },
   { id: 'zoom', name: 'Zoom', icon: '🔍', shortcut: 'Z' },
+
+  // Basic Shapes
   { id: 'rect', name: 'Rectangle', icon: '□', shortcut: 'R' },
   { id: 'ellipse', name: 'Ellipse', icon: '○', shortcut: 'E' },
   { id: 'polygon', name: 'Polygon', icon: '⬡', shortcut: 'P' },
   { id: 'star', name: 'Star', icon: '☆', shortcut: 'S' },
   { id: 'spiral', name: 'Spiral', icon: '🌀', shortcut: '' },
   { id: 'arrow', name: 'Arrow', icon: '➤', shortcut: 'A' },
+  { id: 'chaos', name: 'Chaos', icon: '❋', shortcut: '' },
+
+  // Power Shapes
+  { id: 'powerRect', name: 'Power Rect', icon: '▣', shortcut: '' },
+  { id: 'powerCircle', name: 'Power Circle', icon: '◉', shortcut: '' },
+  { id: 'powerStar', name: 'Power Star', icon: '★', shortcut: '' },
+  { id: 'powerPolygon', name: 'Power Poly', icon: '⬠', shortcut: '' },
+
+  // Curve Tools
   { id: 'line', name: 'Line', icon: '/', shortcut: 'L' },
   { id: 'curve', name: 'Curve', icon: '∿', shortcut: 'C' },
   { id: 'freehand', name: 'Freehand', icon: '✎', shortcut: 'F' },
   { id: 'pen', name: 'Pen', icon: '✒', shortcut: '' },
+  { id: 'knife', name: 'Knife', icon: '🔪', shortcut: 'K' },
+
+  // Text Tools
   { id: 'text', name: 'Text', icon: 'T', shortcut: 'T' },
-  { id: 'textArc', name: 'Text on Arc', icon: '◠', shortcut: '' },
-  { id: 'textPath', name: 'Text on Path', icon: '∿T', shortcut: '' },
-  { id: 'textVert', name: 'Vertical Text', icon: '↕T', shortcut: '' },
+  { id: 'textArc', name: 'Text Arc', icon: '◠', shortcut: '' },
+  { id: 'textPath', name: 'Text Path', icon: '∿T', shortcut: '' },
+  { id: 'textVert', name: 'Vertical T', icon: '↕T', shortcut: '' },
   { id: 'textBox', name: 'Text Box', icon: '▭', shortcut: '' },
+  { id: 'paragraph', name: 'Paragraph', icon: '¶', shortcut: '' },
+
+  // Image & Trace
   { id: 'image', name: 'Image', icon: '🖼', shortcut: 'I' },
   { id: 'trace', name: 'Vectorize', icon: '◎', shortcut: '' },
+
+  // Clone Tools
   { id: 'clone', name: 'Clone', icon: '⧉', shortcut: '' },
-  { id: 'cloneArray', name: 'Clone Array', icon: '▦', shortcut: '' },
-  { id: 'cloneCircle', name: 'Circle Array', icon: '◎', shortcut: '' },
+  { id: 'cloneArray', name: 'Mtx Array', icon: '▦', shortcut: '' },
+  { id: 'cloneCircle', name: 'Circle Arr', icon: '◎', shortcut: '' },
+
+  // Dimension & Measure
   { id: 'dimension', name: 'Dimension', icon: '↔', shortcut: 'D' },
-  { id: 'knife', name: 'Knife', icon: '🔪', shortcut: 'K' },
-  { id: 'eraser', name: 'Eraser', icon: '◻', shortcut: '' },
-  { id: 'fill', name: 'Fill', icon: '🎨', shortcut: 'G' },
+
+  // Warp Tools
+  { id: 'warpCircle', name: 'Warp Circle', icon: '◯', shortcut: '' },
+  { id: 'warpFlag', name: 'Warp Flag', icon: '⚑', shortcut: '' },
+  { id: 'warpWave', name: 'Warp Wave', icon: '〰', shortcut: '' },
+
+  // Effects
   { id: 'outline', name: 'Outline', icon: '○', shortcut: '' },
   { id: 'shadow', name: 'Shadow', icon: '◐', shortcut: '' },
-  { id: 'effects', name: 'Effects', icon: '✨', shortcut: '' },
-  { id: 'warp', name: 'Warp', icon: '〰', shortcut: '' },
+  { id: 'glow', name: 'Glow', icon: '✦', shortcut: '' },
   { id: '3d', name: '3D', icon: '🧊', shortcut: '' },
-  { id: 'contour', name: 'Contour Cut', icon: '✂', shortcut: '' },
+
+  // Fill & Paint
+  { id: 'fill', name: 'Fill', icon: '🎨', shortcut: 'G' },
+  { id: 'eraser', name: 'Eraser', icon: '◻', shortcut: '' },
+
+  // Contour & Cut
+  { id: 'contour', name: 'Contour', icon: '✂', shortcut: '' },
 ]
+
+const allTools = tools
 
 function AppContent() {
   const [dialog, setDialog] = useState(null)
@@ -183,6 +222,13 @@ function AppContent() {
     }
   }, [])
 
+  const handleOpenSpooler = useCallback(() => setDialog({ type: 'spooler' }), [])
+  const handleOpenContour = useCallback(() => setDialog({ type: 'contour' }), [])
+  const handleOpenAlign = useCallback(() => setDialog({ type: 'align' }), [])
+  const handleOpenGradient = useCallback(() => setDialog({ type: 'gradient' }), [])
+  const handleOpenTexture = useCallback(() => setDialog({ type: 'texture' }), [])
+  const handleOpenStepRepeat = useCallback(() => setDialog({ type: 'stepRepeat' }), [])
+
   return (
     <div className="app-container">
       <MenuBar
@@ -208,7 +254,7 @@ function AppContent() {
         onTabChange={(tab) => dispatch({ type: 'SET_TAB', payload: { tab } })}
       />
       <Toolbar
-        tools={tools}
+        tools={allTools}
         activeTool={state.activeTool}
         onToolChange={handleToolChange}
       />
@@ -228,7 +274,13 @@ function AppContent() {
         activePage={state.activePage}
         tool={state.activeTool}
       />
-      {dialog && (
+      {dialog?.type === 'spooler' && <VinylSpooler onClose={() => setDialog(null)} />}
+      {dialog?.type === 'contour' && <ContourCutWizard onClose={() => setDialog(null)} />}
+      {dialog?.type === 'align' && <AlignmentDialog onClose={() => setDialog(null)} />}
+      {dialog?.type === 'gradient' && <GradientEditor onClose={() => setDialog(null)} onApply={(g) => dispatch({ type: 'SET_FILL', payload: { type: 'gradient', color: g.stops[0]?.color } })} />}
+      {dialog?.type === 'texture' && <TextureLibrary onClose={() => setDialog(null)} onSelect={(t) => dispatch({ type: 'SET_FILL', payload: { type: 'texture', color: t.color } })} />}
+      {dialog?.type === 'stepRepeat' && <StepRepeatDialog onClose={() => setDialog(null)} onApply={() => dispatch({ type: 'APPLY_STEP_REPEAT' })} />}
+      {dialog && !['spooler', 'contour', 'align', 'gradient', 'texture', 'stepRepeat'].includes(dialog.type) && (
         <Dialog
           type={dialog.type}
           title={dialog.title}
