@@ -147,6 +147,14 @@
   transform: scale(1.3);
 }
 
+.marquee-box {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  background: rgba(255, 128, 0, 0.12);
+  pointer-events: none;
+  z-index: 30;
+}
+
 .ruler {
   position: absolute;
   background: var(--ruler-bg);

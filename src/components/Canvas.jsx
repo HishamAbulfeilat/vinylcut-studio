@@ -16,6 +16,9 @@ const Canvas = forwardRef((props, ref) => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [dragObjStart, setDragObjStart] = useState({})
   const [nodeEditMode, setNodeEditMode] = useState(false)
+  const [isMarquee, setIsMarquee] = useState(false)
+  const [marqueeStart, setMarqueeStart] = useState({ x: 0, y: 0 })
+  const [marqueeEnd, setMarqueeEnd] = useState({ x: 0, y: 0 })
 
   const getCanvasCoords = useCallback((e) => {
     const canvas = canvasRef.current
@@ -61,7 +64,10 @@ const Canvas = forwardRef((props, ref) => {
         })
         setDragObjStart(starts)
       } else {
-        actions.setSelection([])
+        if (!e.shiftKey) actions.setSelection([])
+        setIsMarquee(true)
+        setMarqueeStart(coords)
+        setMarqueeEnd(coords)
       }
       return
     }
@@ -91,6 +97,7 @@ const Canvas = forwardRef((props, ref) => {
     actions.setCursorPos(coords)
 
     if (isPanning) return
+    if (isMarquee) { setMarqueeEnd(coords); return }
     if (isDragging && Object.keys(dragObjStart).length) {
       const dx = coords.x - dragStart.x
       const dy = coords.y - dragStart.y
@@ -104,6 +111,23 @@ const Canvas = forwardRef((props, ref) => {
 
   const handleMouseUp = useCallback((e) => {
     if (isPanning) { setIsPanning(false); return }
+    if (isMarquee) {
+      setIsMarquee(false)
+      const coords = getCanvasCoords(e)
+      const x1 = Math.min(marqueeStart.x, coords.x)
+      const y1 = Math.min(marqueeStart.y, coords.y)
+      const x2 = Math.max(marqueeStart.x, coords.x)
+      const y2 = Math.max(marqueeStart.y, coords.y)
+      const hits = state.objects
+        .filter(o => !((o.x || 0) > x2 || (o.x || 0) + (o.width || 0) < x1 ||
+                       (o.y || 0) > y2 || (o.y || 0) + (o.height || 0) < y1))
+        .map(o => o.id)
+      const merged = e.shiftKey
+        ? Array.from(new Set([...state.selectedObjects, ...hits]))
+        : hits
+      actions.setSelection(merged)
+      return
+    }
     if (isDragging) { setIsDragging(false); return }
     if (isDrawing) {
       const coords = getCanvasCoords(e)
@@ -615,6 +639,14 @@ const Canvas = forwardRef((props, ref) => {
           ))}
           <CropMarks />
           {renderNodeEditOverlay()}
+          {isMarquee && (
+            <div className="marquee-box" style={{
+              left: Math.min(marqueeStart.x, marqueeEnd.x) * state.zoom + state.panX * state.zoom,
+              top: Math.min(marqueeStart.y, marqueeEnd.y) * state.zoom + state.panY * state.zoom,
+              width: Math.abs(marqueeEnd.x - marqueeStart.x) * state.zoom,
+              height: Math.abs(marqueeEnd.y - marqueeStart.y) * state.zoom,
+            }} />
+          )}
           {isDrawing && (
             <div className="drawing-preview" style={{
               left: Math.min(drawStart.x, currentPos.x) * state.zoom + state.panX * state.zoom,
