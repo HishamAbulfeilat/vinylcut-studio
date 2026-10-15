@@ -16,6 +16,8 @@ import ShapeOperations from './components/ShapeOperations'
 import KeyboardShortcuts from './components/KeyboardShortcuts'
 import MasterPages from './components/MasterPages'
 import ExportDialog from './components/ExportDialog'
+import FontManager from './components/FontManager'
+import ColorLibrary from './components/ColorLibrary'
 import { AppProvider, useApp } from './context/AppContext'
 import './App.css'
 
@@ -197,7 +199,9 @@ function AppContent() {
       {dialog?.type === 'shapeOps' && <ShapeOperations onClose={() => setDialog(null)} />}
       {dialog?.type === 'masterPages' && <MasterPages onClose={() => setDialog(null)} />}
       {dialog?.type === 'export' && <ExportDialog onClose={() => setDialog(null)} />}
-      {dialog && !['spooler', 'contour', 'align', 'gradient', 'texture', 'stepRepeat', 'shapeOps', 'masterPages', 'export'].includes(dialog.type) && (
+      {dialog?.type === 'fontManager' && <FontManager onClose={() => setDialog(null)} />}
+      {dialog?.type === 'colorLibrary' && <ColorLibrary onClose={() => setDialog(null)} onSelect={(color) => dispatch({ type: 'SET_FILL', payload: { color } })} />}
+      {dialog && !['spooler', 'contour', 'align', 'gradient', 'texture', 'stepRepeat', 'shapeOps', 'masterPages', 'export', 'fontManager', 'colorLibrary'].includes(dialog.type) && (
         <Dialog
           type={dialog.type}
           title={dialog.title}
