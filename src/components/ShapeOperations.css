@@ -1,0 +1,50 @@
+.shape-ops-dialog {
+  width: 420px;
+}
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.op-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.op-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 128, 0, 0.3);
+}
+
+.op-icon {
+  font-size: 24px;
+}
+
+.op-name {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.op-desc {
+  font-size: 9px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.op-btn:hover .op-desc {
+  color: rgba(255, 255, 255, 0.8);
+}

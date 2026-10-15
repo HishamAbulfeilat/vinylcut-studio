@@ -542,6 +542,18 @@ function appReducer(state, action) {
       return { ...state, pages: newPages }
     }
 
+    case 'SET_MASTER_PAGES':
+      return { ...state, masterPages: action.payload }
+
+    case 'APPLY_MASTER_TO_PAGE': {
+      const master = state.masterPages[action.payload]
+      if (!master) return state
+      const newPages = state.pages.map((p, i) =>
+        i === state.activePage ? { ...p, objects: [...master.objects] } : p
+      )
+      return { ...state, pages: newPages }
+    }
+
     case 'APPLY_EFFECT': {
       if (!state.selectedObject) return state
       const newObjects = state.objects.map(obj =>
@@ -1201,6 +1213,7 @@ export function AppProvider({ children }) {
     addMasterPage: useCallback(() => dispatch({ type: 'ADD_MASTER_PAGE' }), []),
     setPageSize: useCallback((width, height) => dispatch({ type: 'SET_PAGE_SIZE', payload: { width, height } }), []),
     setPageOrientation: useCallback(() => dispatch({ type: 'SET_PAGE_ORIENTATION' }), []),
+    applyMasterToPage: useCallback((index) => dispatch({ type: 'APPLY_MASTER_TO_PAGE', payload: index }), []),
     applyEffect: useCallback((effect) => dispatch({ type: 'APPLY_EFFECT', payload: effect }), []),
     applyWeld: useCallback(() => dispatch({ type: 'APPLY_WELD' }), []),
     applyPunchOut: useCallback(() => dispatch({ type: 'APPLY_PUNCH_OUT' }), []),

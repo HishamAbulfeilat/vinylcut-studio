@@ -61,6 +61,12 @@ export default function MenuBar({
         { label: 'Rotate 90°', shortcut: 'Ctrl+R' },
         { label: 'Rotate 180°' },
         { label: 'Rotate 270°' },
+        { type: 'separator' },
+        { label: 'Shape Operations...', action: () => window.dispatchEvent(new CustomEvent('openDialog', { detail: 'shapeOps' })) },
+        { label: 'Weld / Combine', shortcut: 'Y' },
+        { label: 'Punch Out' },
+        { label: 'Trim' },
+        { label: 'Cookie Cut' },
       ]
     },
     {
@@ -104,6 +110,16 @@ export default function MenuBar({
         { label: 'Clone Object' },
         { label: 'Matrix Array' },
         { label: 'Circle Array' },
+      ]
+    },
+    {
+      label: 'Page',
+      items: [
+        { label: 'New Page' },
+        { label: 'Delete Page' },
+        { type: 'separator' },
+        { label: 'Page Setup...' },
+        { label: 'Master Pages...', action: () => window.dispatchEvent(new CustomEvent('openDialog', { detail: 'masterPages' })) },
       ]
     },
     {

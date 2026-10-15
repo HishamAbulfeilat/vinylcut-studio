@@ -12,6 +12,9 @@ import AlignmentDialog from './components/AlignmentDialog'
 import GradientEditor from './components/GradientEditor'
 import TextureLibrary from './components/TextureLibrary'
 import StepRepeatDialog from './components/StepRepeatDialog'
+import ShapeOperations from './components/ShapeOperations'
+import KeyboardShortcuts from './components/KeyboardShortcuts'
+import MasterPages from './components/MasterPages'
 import { AppProvider, useApp } from './context/AppContext'
 import './App.css'
 
@@ -83,8 +86,6 @@ const tools = [
   { id: 'contour', name: 'Contour', icon: '✂', shortcut: '' },
 ]
 
-const allTools = tools
-
 function AppContent() {
   const [dialog, setDialog] = useState(null)
   const { state, dispatch } = useApp()
@@ -101,136 +102,48 @@ function AppContent() {
     input.accept = '.svg,.png,.jpg,.jpeg,.bmp,.pdf,.ai,.eps,.dxf,.plt,.hpgl'
     input.onchange = (e) => {
       const file = e.target.files[0]
-      if (file) {
-        dispatch({ type: 'LOAD_FILE', payload: { file } })
-      }
+      if (file) dispatch({ type: 'LOAD_FILE', payload: { file } })
     }
     input.click()
   }, [dispatch])
 
-  const handleSave = useCallback(() => {
-    dispatch({ type: 'SAVE_DOCUMENT' })
-  }, [dispatch])
+  const handleSave = useCallback(() => dispatch({ type: 'SAVE_DOCUMENT' }), [dispatch])
+  const handleExport = useCallback(() => dispatch({ type: 'EXPORT_DOCUMENT' }), [dispatch])
+  const handlePrint = useCallback(() => window.print(), [])
+  const handleCut = useCallback(() => dispatch({ type: 'CUT_SELECTED' }), [dispatch])
+  const handleCopy = useCallback(() => dispatch({ type: 'COPY_SELECTED' }), [dispatch])
+  const handlePaste = useCallback(() => dispatch({ type: 'PASTE' }), [dispatch])
+  const handleDelete = useCallback(() => dispatch({ type: 'DELETE_SELECTED' }), [dispatch])
+  const handleDuplicate = useCallback(() => dispatch({ type: 'DUPLICATE_SELECTED' }), [dispatch])
+  const handleSelectAll = useCallback(() => dispatch({ type: 'SELECT_ALL' }), [dispatch])
+  const handleUndo = useCallback(() => dispatch({ type: 'UNDO' }), [dispatch])
+  const handleRedo = useCallback(() => dispatch({ type: 'REDO' }), [dispatch])
+  const handleZoomIn = useCallback(() => dispatch({ type: 'ZOOM_IN' }), [dispatch])
+  const handleZoomOut = useCallback(() => dispatch({ type: 'ZOOM_OUT' }), [dispatch])
+  const handleZoomToAll = useCallback(() => dispatch({ type: 'ZOOM_TO_ALL' }), [dispatch])
+  const handleZoomToPage = useCallback(() => dispatch({ type: 'ZOOM_TO_PAGE' }), [dispatch])
+  const handleAlign = useCallback((direction) => dispatch({ type: 'ALIGN', payload: { direction } }), [dispatch])
+  const handleGroup = useCallback(() => dispatch({ type: 'GROUP' }), [dispatch])
+  const handleUngroup = useCallback(() => dispatch({ type: 'UNGROUP' }), [dispatch])
+  const handleBringToFront = useCallback(() => dispatch({ type: 'BRING_TO_FRONT' }), [dispatch])
+  const handleSendToBack = useCallback(() => dispatch({ type: 'SEND_TO_BACK' }), [dispatch])
+  const handleBringForward = useCallback(() => dispatch({ type: 'BRING_FORWARD' }), [dispatch])
+  const handleSendBackward = useCallback(() => dispatch({ type: 'SEND_BACKWARD' }), [dispatch])
+  const handleMirrorX = useCallback(() => dispatch({ type: 'MIRROR_X' }), [dispatch])
+  const handleMirrorY = useCallback(() => dispatch({ type: 'MIRROR_Y' }), [dispatch])
+  const handleRotate = useCallback((degrees) => dispatch({ type: 'ROTATE', payload: { degrees } }), [dispatch])
+  const handleToolChange = useCallback((toolId) => dispatch({ type: 'SET_TOOL', payload: { toolId } }), [dispatch])
+  const handlePropertyChange = useCallback((property, value) => dispatch({ type: 'UPDATE_PROPERTY', payload: { property, value } }), [dispatch])
 
-  const handleExport = useCallback(() => {
-    dispatch({ type: 'EXPORT_DOCUMENT' })
-  }, [dispatch])
-
-  const handlePrint = useCallback(() => {
-    window.print()
+  React.useEffect(() => {
+    const handler = (e) => setDialog({ type: e.detail })
+    window.addEventListener('openDialog', handler)
+    return () => window.removeEventListener('openDialog', handler)
   }, [])
-
-  const handleCut = useCallback(() => {
-    dispatch({ type: 'CUT_SELECTED' })
-  }, [dispatch])
-
-  const handleCopy = useCallback(() => {
-    dispatch({ type: 'COPY_SELECTED' })
-  }, [dispatch])
-
-  const handlePaste = useCallback(() => {
-    dispatch({ type: 'PASTE' })
-  }, [dispatch])
-
-  const handleDelete = useCallback(() => {
-    dispatch({ type: 'DELETE_SELECTED' })
-  }, [dispatch])
-
-  const handleDuplicate = useCallback(() => {
-    dispatch({ type: 'DUPLICATE_SELECTED' })
-  }, [dispatch])
-
-  const handleSelectAll = useCallback(() => {
-    dispatch({ type: 'SELECT_ALL' })
-  }, [dispatch])
-
-  const handleUndo = useCallback(() => {
-    dispatch({ type: 'UNDO' })
-  }, [dispatch])
-
-  const handleRedo = useCallback(() => {
-    dispatch({ type: 'REDO' })
-  }, [dispatch])
-
-  const handleZoomIn = useCallback(() => {
-    dispatch({ type: 'ZOOM_IN' })
-  }, [dispatch])
-
-  const handleZoomOut = useCallback(() => {
-    dispatch({ type: 'ZOOM_OUT' })
-  }, [dispatch])
-
-  const handleZoomToAll = useCallback(() => {
-    dispatch({ type: 'ZOOM_TO_ALL' })
-  }, [dispatch])
-
-  const handleZoomToPage = useCallback(() => {
-    dispatch({ type: 'ZOOM_TO_PAGE' })
-  }, [dispatch])
-
-  const handleAlign = useCallback((direction) => {
-    dispatch({ type: 'ALIGN', payload: { direction } })
-  }, [dispatch])
-
-  const handleGroup = useCallback(() => {
-    dispatch({ type: 'GROUP' })
-  }, [dispatch])
-
-  const handleUngroup = useCallback(() => {
-    dispatch({ type: 'UNGROUP' })
-  }, [dispatch])
-
-  const handleBringToFront = useCallback(() => {
-    dispatch({ type: 'BRING_TO_FRONT' })
-  }, [dispatch])
-
-  const handleSendToBack = useCallback(() => {
-    dispatch({ type: 'SEND_TO_BACK' })
-  }, [dispatch])
-
-  const handleBringForward = useCallback(() => {
-    dispatch({ type: 'BRING_FORWARD' })
-  }, [dispatch])
-
-  const handleSendBackward = useCallback(() => {
-    dispatch({ type: 'SEND_BACKWARD' })
-  }, [dispatch])
-
-  const handleMirrorX = useCallback(() => {
-    dispatch({ type: 'MIRROR_X' })
-  }, [dispatch])
-
-  const handleMirrorY = useCallback(() => {
-    dispatch({ type: 'MIRROR_Y' })
-  }, [dispatch])
-
-  const handleRotate = useCallback((degrees) => {
-    dispatch({ type: 'ROTATE', payload: { degrees } })
-  }, [dispatch])
-
-  const handleToolChange = useCallback((toolId) => {
-    dispatch({ type: 'SET_TOOL', payload: { toolId } })
-  }, [dispatch])
-
-  const handlePropertyChange = useCallback((property, value) => {
-    dispatch({ type: 'UPDATE_PROPERTY', payload: { property, value } })
-  }, [dispatch])
-
-  const handleCanvasClick = useCallback((e) => {
-    if (canvasRef.current) {
-      canvasRef.current.handleCanvasClick(e)
-    }
-  }, [])
-
-  const handleOpenSpooler = useCallback(() => setDialog({ type: 'spooler' }), [])
-  const handleOpenContour = useCallback(() => setDialog({ type: 'contour' }), [])
-  const handleOpenAlign = useCallback(() => setDialog({ type: 'align' }), [])
-  const handleOpenGradient = useCallback(() => setDialog({ type: 'gradient' }), [])
-  const handleOpenTexture = useCallback(() => setDialog({ type: 'texture' }), [])
-  const handleOpenStepRepeat = useCallback(() => setDialog({ type: 'stepRepeat' }), [])
 
   return (
     <div className="app-container">
+      <KeyboardShortcuts />
       <MenuBar
         onNew={handleNewDocument}
         onOpen={handleOpenFile}
@@ -254,7 +167,7 @@ function AppContent() {
         onTabChange={(tab) => dispatch({ type: 'SET_TAB', payload: { tab } })}
       />
       <Toolbar
-        tools={allTools}
+        tools={tools}
         activeTool={state.activeTool}
         onToolChange={handleToolChange}
       />
@@ -280,7 +193,9 @@ function AppContent() {
       {dialog?.type === 'gradient' && <GradientEditor onClose={() => setDialog(null)} onApply={(g) => dispatch({ type: 'SET_FILL', payload: { type: 'gradient', color: g.stops[0]?.color } })} />}
       {dialog?.type === 'texture' && <TextureLibrary onClose={() => setDialog(null)} onSelect={(t) => dispatch({ type: 'SET_FILL', payload: { type: 'texture', color: t.color } })} />}
       {dialog?.type === 'stepRepeat' && <StepRepeatDialog onClose={() => setDialog(null)} onApply={() => dispatch({ type: 'APPLY_STEP_REPEAT' })} />}
-      {dialog && !['spooler', 'contour', 'align', 'gradient', 'texture', 'stepRepeat'].includes(dialog.type) && (
+      {dialog?.type === 'shapeOps' && <ShapeOperations onClose={() => setDialog(null)} />}
+      {dialog?.type === 'masterPages' && <MasterPages onClose={() => setDialog(null)} />}
+      {dialog && !['spooler', 'contour', 'align', 'gradient', 'texture', 'stepRepeat', 'shapeOps', 'masterPages'].includes(dialog.type) && (
         <Dialog
           type={dialog.type}
           title={dialog.title}
