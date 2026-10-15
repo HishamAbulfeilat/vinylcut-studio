@@ -1,6 +1,9 @@
-# SignMaster Pro Clone
+# VinylCut Studio
 
-A professional sign-making and vinyl cutting software clone built with React and Vite.
+An original, open-source sign-making and vinyl cutting web app built with React and Vite.
+
+> **Not affiliated with, endorsed by, or derived from any commercial sign software.**
+> This is an independent reimplementation of common vector/sign-making concepts.
 
 ## Features
 
@@ -101,7 +104,7 @@ npm run preview
 
 ## Project Structure
 ```
-signmaster-clone/
+vinylcut-studio/
 ├── src/
 │   ├── components/
 │   │   ├── MenuBar.jsx

@@ -141,7 +141,7 @@ export default function MenuBar({
         { label: 'Help Topics', shortcut: 'F1' },
         { label: 'Tutorials', shortcut: 'Ctrl+T' },
         { type: 'separator' },
-        { label: 'About SignMaster Pro...' },
+        { label: 'About VinylCut Studio...' },
       ]
     },
   ]
@@ -159,7 +159,7 @@ export default function MenuBar({
     <div className="menubar">
       <div className="menubar-brand">
         <span className="brand-icon">✂</span>
-        <span className="brand-text">SignMaster Pro</span>
+        <span className="brand-text">VinylCut Studio</span>
       </div>
       <div className="menubar-menus">
         {menus.map((menu) => (
