@@ -659,14 +659,11 @@ export default function PropertyPanel({ selectedObject, onPropertyChange }) {
             <div className="action-buttons">
               <button onClick={() => {
                 const ts = state.traceSettings
-                if (ts.mode === 'centerline') {
-                  actions.notify('Centerline tracing is not available - using Outline trace', 'warn')
-                }
                 actions.vectorizeSelected({
-                  mode: ts.mode === 'color' ? 'color' : 'outline',
+                  mode: ts.mode,
                   threshold: ts.threshold,
                   colors: ts.colorCount,
-                  smoothing: ts.smoothing * 0.4,
+                  smoothing: ts.mode === 'centerline' ? ts.smoothing * 0.15 : ts.smoothing * 0.4,
                   noise: ts.noiseReduction * 8,
                   replaceSource: true,
                 })

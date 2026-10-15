@@ -258,17 +258,267 @@ function pointInRing(x, y, ring) {
   return inside
 }
 
+/* --------------------------- centerline ---------------------------- */
+
+/**
+ * Zhang-Suen thinning: reduces an ink mask to a 1-pixel-wide skeleton.
+ * This is what makes real centerline tracing possible: the skeleton is
+ * the medial axis of the strokes, so the result is a set of open paths
+ * that follow the artwork instead of its outline.
+ */
+export function zhangSuenThin(mask, w, h) {
+  const m = Uint8Array.from(mask)
+  const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : m[y * w + x])
+  let changed = true
+  const del = []
+  let guard = 0
+  const maxPasses = 64
+  while (changed && guard++ < maxPasses) {
+    changed = false
+    for (let step = 0; step < 2; step++) {
+      del.length = 0
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          if (!m[y * w + x]) continue
+          const p2 = at(x, y - 1)
+          const p3 = at(x + 1, y - 1)
+          const p4 = at(x + 1, y)
+          const p5 = at(x + 1, y + 1)
+          const p6 = at(x, y + 1)
+          const p7 = at(x - 1, y + 1)
+          const p8 = at(x - 1, y)
+          const p9 = at(x - 1, y - 1)
+          const B = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9
+          if (B < 2 || B > 6) continue
+          const seq = [p2, p3, p4, p5, p6, p7, p8, p9, p2]
+          let A = 0
+          for (let i = 0; i < 8; i++) if (seq[i] === 0 && seq[i + 1] === 1) A++
+          if (A !== 1) continue
+          if (step === 0) {
+            if (p2 * p4 * p6 !== 0) continue
+            if (p4 * p6 * p8 !== 0) continue
+          } else {
+            if (p2 * p4 * p8 !== 0) continue
+            if (p2 * p6 * p8 !== 0) continue
+          }
+          del.push(y * w + x)
+        }
+      }
+      if (del.length) {
+        for (const idx of del) m[idx] = 0
+        changed = true
+      }
+    }
+  }
+  return m
+}
+
+/**
+ * Walk a thinned skeleton into open polylines. Junctions and endpoints
+ * become path ends, so strokes that cross produce crossing paths.
+ */
+export function skeletonToPaths(m, w, h) {
+  const at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : m[y * w + x])
+  const degree = (x, y) => {
+    let n = 0
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue
+        if (at(x + dx, y + dy)) n++
+      }
+    }
+    return n
+  }
+  const nbrs = (x, y) => {
+    const out = []
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue
+        const nx = x + dx
+        const ny = y + dy
+        if (at(nx, ny)) out.push([nx, ny])
+      }
+    }
+    return out
+  }
+
+  const key = (x, y) => y * w + x
+  const used = new Set()
+  const paths = []
+
+  // Branch test via the circular "crossing number": count 0->1 transitions
+  // around the 8 neighbours. A through-pixel (including a diagonal staircase
+  // step, which touches 3 neighbours but only 2 branches) scores 2; a real
+  // branch scores 3+. Raw neighbour counts would misread staircases as
+  // junctions and shatter every curve into 2-3 pixel shards.
+  const crossing = (x, y) => {
+    const n = [at(x, y - 1), at(x + 1, y - 1), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1), at(x - 1, y + 1), at(x - 1, y), at(x - 1, y - 1)]
+    let t = 0
+    for (let i = 0; i < 8; i++) if (n[i] === 0 && n[(i + 1) % 8] === 1) t++
+    return t
+  }
+
+  const junctions = new Set()
+  const startPixels = []
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!m[y * w + x]) continue
+      const t = crossing(x, y)
+      if (t !== 2) startPixels.push([x, y])
+      if (t >= 3) junctions.add(key(x, y))
+    }
+  }
+
+  const walk = (sx, sy, nx, ny) => {
+    if (!junctions.has(key(sx, sy))) used.add(key(sx, sy))
+    const pts = [[sx, sy]]
+    let px = sx
+    let py = sy
+    let cx = nx
+    let cy = ny
+    let guard = 0
+    const limit = w * h
+    while (guard++ < limit) {
+      const isNode = junctions.has(key(cx, cy))
+      if (!isNode) used.add(key(cx, cy))
+      pts.push([cx, cy])
+      if (isNode) break
+      const next = nbrs(cx, cy).filter(([ax, ay]) => !(ax === px && ay === py) && !used.has(key(ax, ay)))
+      if (!next.length) break
+      let pick = next[0]
+      if (next.length > 1) {
+        // Two candidates that touch each other are one redundant blob (a
+        // diagonal step in a 1px skeleton), not a fork: continue straight
+        // through them. Genuinely separate candidates are a real junction.
+        let fork = next.length > 2
+        if (!fork) {
+          const [a, b] = next
+          fork = Math.abs(a[0] - b[0]) > 1 || Math.abs(a[1] - b[1]) > 1
+        }
+        if (fork) break
+        const dx = cx - px
+        const dy = cy - py
+        const dl = Math.hypot(dx, dy) || 1
+        let best = -Infinity
+        for (const c of next) {
+          const vx = c[0] - cx
+          const vy = c[1] - cy
+          const score = (dx * vx + dy * vy) / (dl * (Math.hypot(vx, vy) || 1))
+          if (score > best) {
+            best = score
+            pick = c
+          }
+        }
+        for (const c of next) if (c !== pick) used.add(key(c[0], c[1]))
+      }
+      const [tx, ty] = pick
+      px = cx
+      py = cy
+      cx = tx
+      cy = ty
+    }
+    return pts
+  }
+
+  for (const [x, y] of startPixels) {
+    for (const [nx, ny] of nbrs(x, y)) {
+      if (used.has(key(nx, ny))) continue
+      const pts = walk(x, y, nx, ny)
+      if (pts.length > 1) paths.push(pts)
+    }
+  }
+
+  // Isolated loops and leftovers (no endpoint, no junction on the chain).
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!m[y * w + x] || used.has(key(x, y)) || junctions.has(key(x, y))) continue
+      const nb = nbrs(x, y)
+      if (!nb.length) continue
+      const pts = walk(x, y, nb[0][0], nb[0][1])
+      if (pts.length > 1) paths.push(pts)
+    }
+  }
+
+  return paths
+}
+
+/**
+ * Real centerline trace: skeletonise the ink, walk the skeleton into
+ * polylines, simplify them and estimate the stroke width from the ink
+ * area per unit of skeleton length.
+ */
+export function traceCenterlineRings(pixels, options = {}) {
+  const { data, width: w, height: h } = pixels
+  const t = options.threshold == null ? 128 : options.threshold
+  const smoothing = options.smoothing == null ? 0.8 : options.smoothing
+
+  const mask = new Uint8Array(w * h)
+  let ink = 0
+  for (let p = 0, i = 0; p < w * h; p++, i += 4) {
+    if (data[i + 3] <= 16) continue
+    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+    if (lum < t) {
+      mask[p] = 1
+      ink++
+    }
+  }
+  if (!ink) return []
+
+  const skel = zhangSuenThin(mask, w, h)
+  let skelPixels = 0
+  for (let p = 0; p < w * h; p++) if (skel[p]) skelPixels++
+  if (!skelPixels) return []
+
+  const width = Math.max(1, ink / skelPixels)
+  const raw = skeletonToPaths(skel, w, h)
+  const tol = Math.max(0.3, smoothing * 1.2)
+
+  const paths = []
+  for (const line of raw) {
+    if (line.length < 2) continue
+    const s = simplify(line, tol)
+    if (s.length > 1) paths.push(s)
+  }
+  return { paths, width }
+}
+
 /**
  * Full pipeline: image element -> array of shape objects placed inside
  * the given page rectangle.
  */
 export function vectorizeImage(source, rect, options = {}) {
   const pixels = readPixels(source, options.maxSize || 320)
-  const traced = tracePixels(pixels, options)
   const sx = rect.width / pixels.width
   const sy = rect.height / pixels.height
-
   const shapes = []
+
+  if (options.mode === 'centerline') {
+    const res = traceCenterlineRings(pixels, options)
+    if (!res || !res.paths.length) return shapes
+    const d = res.paths
+      .map(line => line.map(([px, py], i) => `${i === 0 ? 'M' : 'L'}${+(rect.x + px * sx).toFixed(3)},${+(rect.y + py * sy).toFixed(3)}`).join(' '))
+      .join(' ')
+    const shape = {
+      type: 'path',
+      name: 'Centerline trace',
+      pathData: d,
+      pathWidth: Math.max(0.01, rect.width),
+      pathHeight: Math.max(0.01, rect.height),
+      x: rect.x,
+      y: rect.y,
+      width: Math.max(0.01, rect.width),
+      height: Math.max(0.01, rect.height),
+      fill: { type: 'none' },
+      stroke: { color: options.color || '#000000', width: Math.max(0.05, res.width * ((sx + sy) / 2)), style: 'solid' },
+      opacity: 100,
+      isVectorized: true,
+      isCenterline: true,
+    }
+    shapes.push(shape)
+    return shapes
+  }
+
+  const traced = tracePixels(pixels, options)
   for (const region of traced) {
     // region.rings is a list of polygons, each [outer, hole, ...]
     const mp = region.rings.map(poly =>

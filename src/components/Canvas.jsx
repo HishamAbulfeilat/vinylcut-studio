@@ -1,6 +1,8 @@
 import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { useApp } from '../context/AppContext'
-import { parsePathData } from '../lib/geometry'
+import { parsePathData, objectToSegments, subpathsBounds } from '../lib/geometry'
+import { warpSubpaths } from '../lib/warp'
+import RasterWarp from './RasterWarp'
 import CropMarks from './CropMarks'
 import './Canvas.css'
 
@@ -589,6 +591,11 @@ const Canvas = forwardRef((props, ref) => {
           flexDirection: obj.verticalText ? 'column' : 'row',
         }
 
+        // For text the fill is the *glyph colour*, not a box fill: the
+        // container must stay transparent or the label renders as a solid
+        // block with invisible lettering.
+        const textBase = { ...baseStyle, background: 'transparent', border: 'none' }
+
         if (obj.textOnArc) {
           const radius = (obj.arcRadius || 80) * scale
           const startAngle = -((obj.arcAngle || 180) / 2) * Math.PI / 180
@@ -651,7 +658,7 @@ const Canvas = forwardRef((props, ref) => {
 
         if (obj.isParagraph) {
           return (
-            <div style={{ ...baseStyle, overflow: 'hidden' }}>
+            <div style={{ ...textBase, overflow: 'hidden' }}>
               <div style={{
                 columns: obj.paragraphSettings?.columns || 1,
                 columnGap: `${(obj.paragraphSettings?.gutter || 0.5) * scale}px`,
@@ -670,7 +677,7 @@ const Canvas = forwardRef((props, ref) => {
         }
 
         return (
-          <div style={{ ...baseStyle, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ ...textBase, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <span style={textStyle}>
               {obj.text}
             </span>
@@ -907,91 +914,93 @@ const Canvas = forwardRef((props, ref) => {
     })
   }
 
-  // Displacement function per warp type. u = 0..1 across the object,
-  // returns a vertical offset (fraction of height) and a vertical scale.
-  const warpFn = (type, amount) => {
-    const a = amount / 100
-    switch (type) {
-      case 'wave':
-        return (u) => ({ ty: Math.sin(u * Math.PI * 2) * a * 0.35, sy: 1 })
-      case 'flag': {
-        const amp = (u) => a * 0.5 * (0.35 + 0.65 * u)
-        return (u) => ({ ty: Math.sin(u * Math.PI * 3) * amp(u), sy: 1 })
-      }
-      case 'circle': {
-        // bulge: taller in the middle, shrinking towards the edges
-        return (u) => {
-          const d = (u - 0.5) * 2 // -1..1
-          return { ty: 0, sy: 1 + a * 0.6 * Math.sqrt(Math.max(0, 1 - d * d)) - a * 0.3 }
-        }
-      }
-      case 'trapezoid':
-        return (u) => ({ ty: 0, sy: 1 + a * 0.8 * (u - 0.5) })
-      case 'perspective':
-        return (u) => ({ ty: a * 0.25 * (u - 0.5), sy: 1 + a * 1.2 * (u - 0.5) })
-      case 'skirt':
-        return (u) => {
-          const d = (u - 0.5) * 2
-          return { ty: a * 0.6 * d * d, sy: 1 + a * 0.5 * d * d }
-        }
-      case 'coons':
-        return (u) => {
-          const v = (u - 0.5) * 2
-          return { ty: a * 0.4 * Math.sin(u * Math.PI) * v * 0 + a * 0.35 * (u * u - u), sy: 1 }
-        }
-      default:
-        return () => ({ ty: 0, sy: 1 })
-    }
-  }
-
+  // Continuous warp rendering.
+  //
+  // Vector art is deformed by pushing its own geometry through a smooth
+  // analytic map, so curves stay crisp. Text and bitmap art are resampled
+  // per pixel through the inverse of the same map. Neither path slices the
+  // object into strips.
   const renderWarped = (obj) => {
     if (!obj.warpType) return renderShape(obj)
-    const fn = warpFn(obj.warpType, obj.warpIntensity || 50)
     const s = state.zoom || 1
-    const STRIPS = 24
-    const stripW = 100 / STRIPS
-    const boxLeft = obj.x * s + state.panX * s
-    const boxTop = obj.y * s + state.panY * s
-    const boxW = Math.abs((obj.width || 0) * s)
-    const boxH = Math.abs((obj.height || 0) * s)
-    const inner = renderShape({ ...obj, warpType: undefined, warpIntensity: undefined }, { left: 0, top: 0 })
 
-    const strips = []
-    for (let i = 0; i < STRIPS; i++) {
-      const u = (i + 0.5) / STRIPS
-      const { ty, sy } = fn(u)
-      strips.push(
-        <div
-          key={i}
-          style={{
-            position: 'absolute',
-            left: `${i * stripW}%`,
-            width: `${stripW + 0.5}%`,
-            top: 0,
-            height: '100%',
-            overflow: 'hidden',
-            transform: `translateY(${ty * 100}%) scaleY(${sy})`,
-            transformOrigin: 'center',
-          }}
-        >
-          <div style={{ position: 'absolute', left: `${-i * 100}%`, width: `${STRIPS * 100}%`, top: 0, height: '100%' }}>
-            {inner}
-          </div>
-        </div>
+    // Raster content (text, bitmaps) -> per-pixel continuous resample.
+    if (obj.type === 'text' || obj.type === 'image') {
+      return (
+        <RasterWarp
+          obj={obj}
+          scale={s}
+          panX={state.panX}
+          panY={state.panY}
+          pad={0.4}
+          fallback={() => renderShape({ ...obj, warpType: undefined, warpIntensity: undefined })}
+        />
       )
     }
+
+    // Vector content -> warp the real outline.
+    let subs = []
+    try {
+      subs = objectToSegments(obj)
+    } catch {
+      subs = []
+    }
+    if (!subs.length) return renderShape(obj)
+
+    const b = subpathsBounds(subs)
+    if (!b) return renderShape(obj)
+
+    const isStrokeOnly = ['line', 'curve', 'freehand', 'pen', 'spiral'].includes(obj.type) || obj.fill?.type === 'none'
+    const warped = warpSubpaths(subs, b, obj.warpType, obj.warpIntensity || 50, 0.02)
+    if (!warped.length) return renderShape(obj)
+
+    const d = warped
+      .map(sp => sp.points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(3)},${y.toFixed(3)}`).join(' ') + (sp.closed ? ' Z' : ''))
+      .join(' ')
+
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const sp of warped) {
+      for (const [x, y] of sp.points) {
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      }
+    }
+    if (!isFinite(minX)) return renderShape(obj)
+    const vw = Math.max(0.01, maxX - minX)
+    const vh = Math.max(0.01, maxY - minY)
+
+    const fillId = `cv-warp-fill-${String(obj.id || '').replace(/[^a-zA-Z0-9]/g, '')}`
+    const svgF = svgFill(obj.fill, fillId)
+
     return (
       <div
         style={{
           position: 'absolute',
-          left: boxLeft,
-          top: boxTop,
-          width: boxW,
-          height: boxH,
+          left: minX * s + state.panX * s,
+          top: minY * s + state.panY * s,
+          width: vw * s,
+          height: vh * s,
+          opacity: (obj.opacity || 100) / 100,
           pointerEvents: 'none',
         }}
       >
-        {strips}
+        <svg width={vw * s} height={vh * s} viewBox={`${minX} ${minY} ${vw} ${vh}`} style={{ overflow: 'visible' }}>
+          <defs>{svgF.defs}</defs>
+          <path
+            d={d}
+            fill={isStrokeOnly ? 'none' : svgF.fill}
+            fillRule="evenodd"
+            stroke={obj.stroke?.width > 0 ? obj.stroke.color : (isStrokeOnly ? (obj.stroke?.color || '#000') : 'none')}
+            strokeWidth={obj.stroke?.width || (isStrokeOnly ? 1 : 0)}
+            strokeLinejoin="round"
+            strokeLinecap={obj.penStyle?.endCap || 'round'}
+          />
+        </svg>
       </div>
     )
   }

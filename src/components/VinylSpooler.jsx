@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { useApp } from '../context/AppContext'
+import { CUTTER_PROFILES } from '../lib/cutter'
 import './VinylSpooler.css'
 
 export default function VinylSpooler({ onClose }) {
@@ -13,12 +14,13 @@ export default function VinylSpooler({ onClose }) {
     overcut: 0,
     bidirectional: true,
     mediaSupplies: 'roll',
-    cutterModel: 'Summa D60',
+    cutterModel: CUTTER_PROFILES[0].id,
+    downloadOnly: false,
   })
 
   const addJob = () => {
     const page = state.pages[state.activePage] || { width: 210, height: 297 }
-    const paths = state.objects.length
+    const paths = state.objects.filter(o => !['clone', 'cloneArray', 'cloneCircle'].includes(o.type)).length
     if (!paths) {
       actions.notify('Nothing to cut - the page is empty', 'warn')
       return
@@ -31,19 +33,27 @@ export default function VinylSpooler({ onClose }) {
       paths,
       material: settings.mediaSupplies === 'roll' ? 'Roll vinyl' : 'Sheet vinyl',
       size: `${Math.round(page.width)}x${Math.round(page.height)}mm`,
+      profile: settings.cutterModel,
     }
     setJobs(list => [...list, newJob])
     setSelectedJob(newJob.id)
   }
 
-  // Real output: stream HPGL to the cutter over WebSerial when the browser
-  // supports it, otherwise save a .plt file the cutter software can load.
+  // Real output: stream dialect-specific cut data to the cutter over
+  // WebSerial (per-vendor init/status), or save a .plt file.
   const startCut = async (jobId) => {
     setJobs(list => list.map(j => (j.id === jobId ? { ...j, status: 'cutting', progress: 0 } : j)))
+    const target = jobs.find(j => j.id === jobId)
     const result = await actions.sendToCutter({
-      speed: Math.round(settings.speed / 5),
-      force: Math.round(settings.force / 10),
-      baudRate: 9600,
+      speed: Math.round(settings.speed / 5) || 20,
+      force: Math.round(settings.force / 10) || 10,
+      cutterModel: (target && target.profile) || settings.cutterModel,
+      unitsPerMm: 40,
+      downloadOnly: settings.downloadOnly,
+      onProgress: (done, total) => {
+        const pct = total ? Math.round((done / total) * 90) : 0
+        setJobs(list => list.map(j => (j.id === jobId ? { ...j, progress: pct } : j)))
+      },
     })
     if (!result) {
       setJobs(list => list.map(j => (j.id === jobId ? { ...j, status: 'stopped', progress: 0 } : j)))
@@ -52,7 +62,7 @@ export default function VinylSpooler({ onClose }) {
     const interval = setInterval(() => {
       setJobs(prev => prev.map(j => {
         if (j.id === jobId && j.status === 'cutting') {
-          const newProgress = j.progress + 10
+          const newProgress = j.progress + 5
           if (newProgress >= 100) {
             clearInterval(interval)
             return { ...j, status: 'complete', progress: 100 }
@@ -61,7 +71,7 @@ export default function VinylSpooler({ onClose }) {
         }
         return j
       }))
-    }, 250)
+    }, 150)
   }
 
   const pauseJob = (jobId) => {
@@ -118,12 +128,11 @@ export default function VinylSpooler({ onClose }) {
               <h4>Cutter Settings</h4>
               <div className="settings-form">
                 <div className="setting-row">
-                  <label>Cutter Model:</label>
+                  <label>Cutter / Dialect:</label>
                   <select value={settings.cutterModel} onChange={e => setSettings({...settings, cutterModel: e.target.value})}>
-                    <option>Summa D60</option>
-                    <option>Graphtec CE6000</option>
-                    <option>Roland GX-24</option>
-                    <option>Mimaki CG-130</option>
+                    {CUTTER_PROFILES.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="setting-row">
@@ -150,6 +159,12 @@ export default function VinylSpooler({ onClose }) {
                   <label>
                     <input type="checkbox" checked={settings.bidirectional} onChange={e => setSettings({...settings, bidirectional: e.target.checked})} />
                     Bidirectional
+                  </label>
+                </div>
+                <div className="setting-row">
+                  <label>
+                    <input type="checkbox" checked={settings.downloadOnly} onChange={e => setSettings({...settings, downloadOnly: e.target.checked})} />
+                    Save .plt file instead of sending
                   </label>
                 </div>
               </div>

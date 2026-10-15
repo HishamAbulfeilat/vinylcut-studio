@@ -17,6 +17,9 @@ An original, open-source sign-making and vinyl cutting web app built with React 
 - **Vectorize (trace bitmap)** — threshold or k-means colour tracing of imported rasters into
   real paths, with hole detection, Douglas–Peucker smoothing, noise filtering and a live
   parameter dialog
+- **Centerline trace** — a genuine Zhang–Suen skeletonisation, skeleton-graph walk into open
+  polylines, spur and junction handling, Douglas–Peucker smoothing and a stroke width measured
+  from ink area per unit of skeleton length (outline tracing remains the other mode)
 - **Node editing** — actual path vertices are shown and can be dragged (not just a bbox)
 - **Eraser** and **bucket Fill** tools, **Zoom** tool, click-to-apply clone / warp / effect tools
 - **Real fills** — solid, linear gradients (multi-stop + angle), hatched textures, spot colours,
@@ -24,14 +27,24 @@ An original, open-source sign-making and vinyl cutting web app built with React 
 - **Live effects** — 3D / Logo-3D extrusion, Block / Drop / Soft shadow, Glow, Outline,
   Inner Outline, Multi-Outline, Multi-Inline, Tint Map, Fire, Reflect.
   Effects are stored on the object, layered around it at render time, and survive save/load.
-- **Warps** — Circle, Coons, Flag, Perspective, Skirt, Trapezoid, Wave, rendered for real
-  by slicing the object into displaced/scaled strips
+- **Warps** — Circle, Coons, Flag, Perspective, Skirt, Trapezoid, Wave, Arch, Bulge, Twist,
+  Squeeze, Fisheye, Ripple. These are **continuous analytic maps**, not strip lists: vector art
+  is pushed through the warp as real densified geometry (curves stay smooth, straight edges
+  bend), and text/bitmaps are resampled per output pixel through the inverse map
 - **Import** — raster (PNG/JPEG/GIF/BMP/WebP), SVG (incl. `<g transform>`), DXF R12
-  (`LWPOLYLINE`/`POLYLINE`/`CIRCLE`/`ARC`/`LINE`), HPGL/PLT, and `.vcs` documents
+  (`TEXT`/`MTEXT`, `LWPOLYLINE`/`POLYLINE`, `LINE`, `CIRCLE`/`ARC`, `SOLID`/`TRACE`/`3DFACE`),
+  HPGL/PLT (incl. `LB` labels), **PDF / EPS / AI** (a real object parser plus a content-stream
+  interpreter, `FlateDecode` included), and `.vcs` documents
 - **Export** — SVG, PDF 1.4, EPS, AI (PostScript), DXF R12, HPGL/PLT, plus rasterised
   PNG / JPEG / BMP at a chosen DPI; crop and registration marks included
-- **Cutter output** — real HPGL generated from the page or selection; streamed to a cutter over
-  **WebSerial** when the browser supports it, otherwise saved as a `.plt` file
+  - text is written as **real text** (SVG `<text>`, PDF `BT/Tf/Tm/Tj`, EPS `show`, DXF `TEXT`,
+    HPGL `LB`) sized with base-14 font metrics — not as a bounding box
+  - rasters are embedded as **real images** (`<image>`, PDF `/DCTDecode` XObject, EPS
+    `colorimage`); DXF and HPGL have no raster concept, so bitmaps are auto-traced to paths
+  - **curves stay curves** — true cubics are emitted (PDF `c`, EPS `curveto`, SVG `C`)
+- **Cutter output** — real HPGL with **per-vendor dialects** (HP-GL/1, HP-GL/2, Graphtec GP-GL,
+  Summa, Roland DMPL) including each vendor's init / park / status sequences and USB vendor-ID
+  filters; streamed over **WebSerial** when the user grants a port, otherwise saved as a `.plt`
 - **Contour Cut Wizard** — produces genuine offset cut lines (with cut order and
   skip-inner-cuts handling) and optional crop rectangles, not just a UI
 - **Vinyl Spooler** — real jobs built from the current document, real HPGL on *Start Cut*
@@ -39,19 +52,16 @@ An original, open-source sign-making and vinyl cutting web app built with React 
 - Undo/redo, align, z-order, group, duplicate, copy/paste
 - Toast notifications for import/export/cutter results
 
-**Approximated** (documented, deliberate):
+**Deliberately not done:** nothing on the list above is faked. The earlier warp/export/curve
+approximations and the missing PDF/EPS import have all been replaced with real implementations.
 
-- Warps are discrete strip transforms (24 vertical strips), not a continuous mesh warp
-- Vector export writes text as its bounding box and drops raster images from vector output;
-  use the PNG/JPEG/BMP paths for image-bearing artwork
-- Curves are flattened when converted to polygons for cutting and boolean ops
+**What a browser still cannot do:**
 
-**Not possible in a browser app:**
-
-- A bundled cutter **driver**. There is no native USB/parallel driver here — output is
-  standard HPGL over WebSerial (Chrome/Edge, user-granted port) or as a `.plt` file
-- Importing PDF / AI / EPS — no PostScript interpreter is shipped; the importer says so
-  rather than silently failing
+- Ship an OS-level cutter **driver**. WebSerial covers USB/COM cutters on Chromium with a
+  user-granted port; there is no kernel/parallel-port driver, and that is a platform limit
+  rather than a missing feature.
+- Reproduce an embedded-font PDF/AI exactly. Text is mapped to the nearest base-14 / system
+  font when the source did not store glyph outlines as paths.
 
 ## Features
 
@@ -80,12 +90,15 @@ An original, open-source sign-making and vinyl cutting web app built with React 
 - Opacity control
 - Stroke color and width
 - Effects: 3D, Block Shadow, Drop Shadow, Soft Shadow, Glow, Outline, Multi-Outline, Multi-Inline
+- Warps (13 continuous maps): Circle, Coons, Flag, Perspective, Skirt, Trapezoid, Wave, Arch,
+  Bulge, Twist, Squeeze, Fisheye, Ripple
 
 ### Cutting & Output
 - **Vinyl Spooler** - real jobs built from the current document, HPGL on *Start Cut*
 - **Contour Cut Wizard** - generates genuine offset cut lines, cut order and crop rectangles
-- **HPGL / PLT** output for Summa, Graphtec, Roland, Mimaki cutters
-- **WebSerial** "send to cutter" with a `.plt` file fallback
+- **Cutter profiles** - HP-GL/1, HP-GL/2, Graphtec GP-GL, Summa, Roland DMPL, each with its own
+  init/park/status commands and USB vendor-ID filter
+- **WebSerial** "send to cutter" with a real `.plt` file fallback
 - Speed, Force, Offset, Overcut settings
 - Bidirectional cutting
 
@@ -100,10 +113,10 @@ An original, open-source sign-making and vinyl cutting web app built with React 
 ### Document Management
 - Multi-page documents
 - Page setup (size, orientation)
-- Import: PNG, JPG, GIF, BMP, WebP, SVG, DXF, PLT, HPGL, `.vcs`
+- Import: PNG, JPG, GIF, BMP, WebP, SVG, DXF, PLT, HPGL, PDF, EPS, AI, `.vcs`
 - Export: SVG, PDF, EPS, AI, DXF, PLT/HPGL, PNG, JPG, BMP
 - Save/Load project files (`.vcs.json`)
-- Vectorize (trace bitmap) to real vector paths
+- Vectorize (trace bitmap) to real vector paths — outline or centerline
 
 ### Keyboard Shortcuts
 - Ctrl+N: New Document
@@ -153,6 +166,7 @@ npm run preview
 - CSS3 (Custom properties, Flexbox, Grid)
 - DOM + SVG rendering surface with an HTML5 Canvas grid/backing layer
 - `polygon-clipping` for real boolean geometry and offsetting
+- WebSerial for cutter output (Chromium), with a `.plt` fallback
 
 ## Project Structure
 ```
@@ -161,13 +175,14 @@ vinylcut-studio/
 │   ├── components/
 │   │   ├── MenuBar.jsx
 │   │   ├── Toolbar.jsx
-│   │   ├── Canvas.jsx
+│   │   ├── Canvas.jsx          # DOM/SVG surface + continuous warp rendering
+│   │   ├── RasterWarp.jsx      # per-pixel warp surface for text and bitmaps
 │   │   ├── PropertyPanel.jsx
 │   │   ├── StatusBar.jsx
 │   │   ├── TabBar.jsx
 │   │   ├── Dialog.jsx
 │   │   ├── ExportDialog.jsx
-│   │   ├── VectorizeDialog.jsx
+│   │   ├── VectorizeDialog.jsx # outline / centerline tracing
 │   │   ├── VinylSpooler.jsx
 │   │   ├── ContourCutWizard.jsx
 │   │   ├── AlignmentDialog.jsx
@@ -175,12 +190,17 @@ vinylcut-studio/
 │   │   ├── TextureLibrary.jsx
 │   │   └── StepRepeatDialog.jsx
 │   ├── context/
-│   │   └── AppContext.jsx
+│   │   └── AppContext.jsx      # reducer, provider actions, import/export/cutter wiring
 │   ├── lib/
 │   │   ├── geometry.js    # shape <-> polygon, boolean ops, offset, knife, HPGL
-│   │   ├── tracer.js      # raster -> vector tracing
-│   │   ├── importers.js   # raster / SVG / DXF / PLT / document import
-│   │   └── exporters.js   # SVG / PDF / EPS / AI / DXF / HPGL + raster export
+│   │   ├── warp.js        # continuous warp maps + raster resampling
+│   │   ├── tracer.js      # raster -> vector (outline and centerline/skeleton)
+│   │   ├── rasterprep.js  # bitmaps -> bytes for PDF/EPS + auto-trace for DXF/HPGL
+│   │   ├── pdf.js         # PDF parser + content-stream interpreter
+│   │   ├── postscript.js  # PostScript / EPS / AI interpreter
+│   │   ├── importers.js   # raster / SVG / DXF / PLT / PDF / EPS / document import
+│   │   ├── exporters.js   # SVG / PDF / EPS / AI / DXF / HPGL + raster export
+│   │   └── cutter.js      # cutter profiles, HPGL dialects, WebSerial driver
 │   ├── App.jsx
 │   ├── App.css
 │   ├── main.jsx

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useCallback, useRef } from 'react'
+import React, { createContext, useContext, useReducer, useCallback, useRef, useEffect } from 'react'
 import {
   objectToRings,
   objectToMultiPolygon,
@@ -14,9 +14,11 @@ import {
   difference,
   intersection,
 } from '../lib/geometry'
+import { buildSvg, buildPdf, buildPostScript, buildDxf, buildHpgl, rasterise, download, vectorObjects, encodeBmp } from '../lib/exporters'
+import { prepareImageAssets, traceAssetToShape } from '../lib/rasterprep'
+import { CUTTER_PROFILES, profileById, buildCutterJob, connectCutter, closeCutter, writeJob, queryStatus, serialSupported } from '../lib/cutter'
 import { importFile, loadImageElement } from '../lib/importers'
 import { vectorizeImage } from '../lib/tracer'
-import { buildSvg, buildPdf, buildPostScript, buildDxf, buildHpgl, rasterise, download, vectorObjects, encodeBmp } from '../lib/exporters'
 
 const AppContext = createContext()
 
@@ -1421,7 +1423,7 @@ export function AppProvider({ children }) {
     const input = document.createElement('input')
     input.type = 'file'
     input.id = 'vcs-import-input'
-    input.accept = '.svg,.dxf,.plt,.hpgl,.hgl,.png,.jpg,.jpeg,.gif,.bmp,.webp,.avif,.json,.vcs'
+    input.accept = '.svg,.pdf,.ai,.eps,.ps,.dxf,.plt,.hpgl,.hgl,.png,.jpg,.jpeg,.gif,.bmp,.webp,.avif,.json,.vcs'
     input.style.display = 'none'
     input.onchange = async (e) => {
       const f = e.target.files && e.target.files[0]
@@ -1501,6 +1503,19 @@ export function AppProvider({ children }) {
 
     const f = format.toLowerCase()
     try {
+      // Formats that carry bitmaps need real image bytes; DXF and HPGL have
+      // no raster concept, so their bitmaps are auto-traced into geometry.
+      const needsImages = ['pdf', 'eps', 'ps', 'ai', 'dxf', 'plt', 'hpgl'].includes(f)
+      const images = needsImages ? await prepareImageAssets(objects, { maxSize: options.imageSize || 1000 }) : {}
+      const traced = (f === 'dxf' || f === 'plt' || f === 'hpgl')
+        ? Object.fromEntries(
+            objects
+              .filter(o => o.type === 'image' && images[o.id])
+              .map(o => [o.id, traceAssetToShape(images[o.id], o, { threshold: options.traceThreshold })])
+              .filter(([, s]) => s),
+          )
+        : {}
+
       if (f === 'svg') {
         download(svg, `${base}.svg`, 'image/svg+xml')
       } else if (f === 'png' || f === 'jpg' || f === 'jpeg') {
@@ -1519,15 +1534,15 @@ export function AppProvider({ children }) {
         const bmp = encodeBmp(data)
         download(new Blob([bmp], { type: 'image/bmp' }), `${base}.bmp`)
       } else if (f === 'pdf') {
-        download(buildPdf(objects, page), `${base}.pdf`, 'application/pdf')
+        download(buildPdf(objects, page, { images }), `${base}.pdf`, 'application/pdf')
       } else if (f === 'eps' || f === 'ps') {
-        download(buildPostScript(objects, page), `${base}.eps`, 'application/postscript')
+        download(buildPostScript(objects, page, { images, traced }), `${base}.eps`, 'application/postscript')
       } else if (f === 'ai') {
-        download(buildPostScript(objects, page), `${base}.ai`, 'application/postscript')
+        download(buildPostScript(objects, page, { images, traced }), `${base}.ai`, 'application/postscript')
       } else if (f === 'dxf') {
-        download(buildDxf(objects), `${base}.dxf`, 'application/dxf')
+        download(buildDxf(objects, { traced, pageHeight: page.height }), `${base}.dxf`, 'application/dxf')
       } else if (f === 'plt' || f === 'hpgl') {
-        download(buildHpgl(objects, options), `${base}.plt`, 'application/vnd.hp-hpgl')
+        download(buildHpgl(objects, { ...options, traced, pageHeight: page.height }), `${base}.plt`, 'application/vnd.hp-hpgl')
       } else {
         notify(`Export format .${f} is not supported`, 'error')
         return null
@@ -1577,10 +1592,8 @@ export function AppProvider({ children }) {
     }
   }, [notify])
 
-  // HPGL spooling: always offers a real .plt file; also streams over WebSerial
-  // when the browser and the cutter both support it.
-  const serialSupported = typeof navigator !== 'undefined' && 'serial' in navigator
-
+  // Cutter output: a real WebSerial driver with per-vendor dialects, or a
+  // .plt file when the browser has no serial support / the user cancels.
   const sendToCutter = useCallback(async (options = {}) => {
     const s = stateRef.current
     const objects = s.selectedObjects.length
@@ -1590,27 +1603,44 @@ export function AppProvider({ children }) {
       notify('Nothing to cut - the page is empty', 'warn')
       return null
     }
-    const hpgl = buildHpgl(objects, options)
-    if (!serialSupported || options.downloadOnly) {
-      download(hpgl, `${(s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')}.plt`, 'application/vnd.hp-hpgl')
-      notify('Saved HPGL (.plt) - load it from your cutter software', 'ok')
+    const page = s.pages[s.activePage] || { width: 210, height: 297 }
+    const profile = profileById(options.cutterModel || options.profile || 'hpgl')
+    const job = buildCutterJob(objects, page, profile, options)
+    const saveFallback = () => {
+      download(job, `${(s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')}.plt`, 'application/vnd.hp-hpgl')
+      notify('Saved cutter file (.plt) - load it from your cutter software', 'ok')
+    }
+
+    if (!serialSupported() || options.downloadOnly) {
+      saveFallback()
+      return 'download'
+    }
+    let port = null
+    try {
+      port = await connectCutter(profile)
+    } catch {
+      saveFallback()
+      notify('Serial connection cancelled - saved the cutter file instead', 'warn')
       return 'download'
     }
     try {
-      const port = await navigator.serial.requestPort()
-      await port.open({ baudRate: options.baudRate || 9600 })
-      const writer = port.writable.getWriter()
-      await writer.write(new TextEncoder().encode(hpgl))
-      writer.releaseLock()
-      await port.close()
-      notify('Sent to cutter over serial', 'ok')
+      if (profile.statusQuery) {
+        const status = await queryStatus(port, profile, 800)
+        if (status) notify(`${profile.name}: ${status.slice(0, 60)}`, 'info')
+      }
+      const written = await writeJob(port, job, { onProgress: options.onProgress })
+      notify(`Sent ${written} bytes to ${profile.name}`, 'ok')
       return 'serial'
     } catch (err) {
-      download(hpgl, `${(s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')}.plt`, 'application/vnd.hp-hpgl')
-      notify('Serial send cancelled - saved HPGL (.plt) instead', 'warn')
+      saveFallback()
+      notify(err && err.message ? err.message : 'Serial send failed', 'error')
       return 'download'
+    } finally {
+      await closeCutter(port)
     }
-  }, [notify, serialSupported])
+  }, [notify])
+
+  const serialSupportedFlag = serialSupported()
 
   const actions = {
     newDocument: useCallback(() => dispatch({ type: 'NEW_DOCUMENT' }), []),
@@ -1623,7 +1653,7 @@ export function AppProvider({ children }) {
     exportAs,
     vectorizeSelected,
     sendToCutter,
-    serialSupported,
+    serialSupported: serialSupportedFlag,
     notify,
     saveDocument: useCallback(() => {
       const s = stateRef.current
@@ -1748,6 +1778,14 @@ export function AppProvider({ children }) {
     applyWarpTrapezoid: useCallback(() => dispatch({ type: 'APPLY_WARP_TRAPEZOID' }), []),
     applyWarpWave: useCallback(() => dispatch({ type: 'APPLY_WARP_WAVE' }), []),
   }
+
+  // Dev-only inspection hook (stripped from production builds by Vite's
+  // import.meta.env.DEV substitution). Useful for the browser test suite.
+  useEffect(() => {
+    if (import.meta && import.meta.env && import.meta.env.DEV && typeof window !== 'undefined') {
+      window.__vcs = { state, dispatch, actions }
+    }
+  }, [state, actions])
 
   return (
     <AppContext.Provider value={{ state, dispatch, actions }}>

@@ -55,8 +55,16 @@ export default function VectorizeDialog({ selectedObject, onClose }) {
             <div className="vectorize-seg">
               <button className={mode === 'outline' ? 'active' : ''} onClick={() => setMode('outline')}>Outline (B/W)</button>
               <button className={mode === 'color' ? 'active' : ''} onClick={() => setMode('color')}>Colour Layers</button>
+              <button className={mode === 'centerline' ? 'active' : ''} onClick={() => setMode('centerline')}>Centerline</button>
             </div>
           </div>
+
+          {mode === 'centerline' && (
+            <p className="vectorize-hint">
+              Skeletonises the artwork into open paths with an estimated stroke width. Best for scanned
+              line art, signatures and pen plots.
+            </p>
+          )}
 
           {mode === 'outline' ? (
             <div className="vectorize-row">
