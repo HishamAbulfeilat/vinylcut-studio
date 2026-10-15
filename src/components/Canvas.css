@@ -77,6 +77,49 @@
   pointer-events: none;
 }
 
+.selection-box {
+  pointer-events: none;
+}
+
+.guide {
+  position: absolute;
+  background: var(--guide-color);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.guide-horizontal {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.guide-vertical {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.canvas-container.panning {
+  cursor: grabbing;
+}
+
+.canvas-container.tool-select .main-canvas {
+  cursor: default;
+}
+
+.canvas-container.tool-pan .main-canvas {
+  cursor: grab;
+}
+
+.canvas-container.tool-node .main-canvas {
+  cursor: crosshair;
+}
+
+.canvas-container.tool-zoom .main-canvas {
+  cursor: zoom-in;
+}
+
 .ruler {
   position: absolute;
   background: var(--ruler-bg);
