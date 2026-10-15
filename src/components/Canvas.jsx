@@ -557,8 +557,8 @@ const Canvas = forwardRef((props, ref) => {
               {state.selectedObjects.includes(obj.id) && (
                 <div className="selection-box" style={{
                   position: 'absolute',
-                  left: obj.x * state.zoom + state.panX * scale - 2,
-                  top: obj.y * state.zoom + state.panY * scale - 2,
+                  left: obj.x * state.zoom + state.panX * state.zoom - 2,
+                  top: obj.y * state.zoom + state.panY * state.zoom - 2,
                   width: obj.width * state.zoom + 4,
                   height: obj.height * state.zoom + 4,
                   border: '2px solid var(--selection)',
