@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useCallback } from 'react'
+import React, { createContext, useContext, useReducer, useCallback, useRef } from 'react'
 import * as polygonClippingNS from 'polygon-clipping'
 
 // polygon-clipping ships a default export (an object of ops) at runtime; named
@@ -191,6 +191,27 @@ function appReducer(state, action) {
 
     case 'LOAD_FILE':
       return { ...state, documentName: action.payload.file.name, isModified: false }
+
+    case 'LOAD_DOCUMENT': {
+      const doc = action.payload.doc || {}
+      const name = (action.payload.name || 'Untitled-1').replace(/\.vcs\.json$/i, '').replace(/\.json$/i, '')
+      return {
+        ...state,
+        documentName: name,
+        pages: Array.isArray(doc.pages) && doc.pages.length ? doc.pages : state.pages,
+        masterPages: Array.isArray(doc.masterPages) ? doc.masterPages : [],
+        objects: Array.isArray(doc.objects) ? doc.objects : [],
+        activePage: typeof doc.activePage === 'number' ? doc.activePage : 0,
+        currentFill: doc.currentFill || state.currentFill,
+        currentStroke: doc.currentStroke || state.currentStroke,
+        textSettings: doc.textSettings || state.textSettings,
+        selectedObjects: [],
+        selectedObject: null,
+        history: [],
+        historyIndex: -1,
+        isModified: false,
+      }
+    }
 
     case 'SAVE_DOCUMENT':
       return { ...state, isModified: false }
@@ -1316,10 +1337,78 @@ function appReducer(state, action) {
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(appReducer, initialState)
 
+  // Always-current state for use inside stable callbacks (file I/O, etc.)
+  const stateRef = useRef(state)
+  stateRef.current = state
+
+  // Read a saved .vcs.json document off disk and restore it.
+  const readDocumentFile = useCallback((file) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const doc = JSON.parse(String(reader.result))
+        if (doc && doc.format === 'vinylcut-document') {
+          dispatch({ type: 'LOAD_DOCUMENT', payload: { doc, name: file.name } })
+        } else {
+          console.warn('Unrecognised document format:', file.name)
+        }
+      } catch (err) {
+        console.warn('Could not parse document:', err)
+      }
+    }
+    reader.readAsText(file)
+  }, [])
+
+  const openDocumentPicker = useCallback(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.id = 'vcs-open-input'
+    input.accept = '.json,.vcs'
+    input.style.display = 'none'
+    input.onchange = (e) => {
+      const f = e.target.files && e.target.files[0]
+      if (f) readDocumentFile(f)
+      input.remove()
+    }
+    document.body.appendChild(input)
+    input.click()
+  }, [readDocumentFile])
+
+  const serialiseDocument = useCallback(() => {
+    const s = stateRef.current
+    return JSON.stringify({
+      format: 'vinylcut-document',
+      version: 1,
+      documentName: s.documentName,
+      activePage: s.activePage,
+      pages: s.pages,
+      masterPages: s.masterPages,
+      objects: s.objects,
+      currentFill: s.currentFill,
+      currentStroke: s.currentStroke,
+      textSettings: s.textSettings,
+    }, null, 2)
+  }, [])
+
   const actions = {
     newDocument: useCallback(() => dispatch({ type: 'NEW_DOCUMENT' }), []),
-    loadFile: useCallback((file) => dispatch({ type: 'LOAD_FILE', payload: { file } }), []),
-    saveDocument: useCallback(() => dispatch({ type: 'SAVE_DOCUMENT' }), []),
+    loadFile: useCallback((file) => {
+      if (file) readDocumentFile(file)
+      else openDocumentPicker()
+    }, [readDocumentFile, openDocumentPicker]),
+    saveDocument: useCallback(() => {
+      const s = stateRef.current
+      const blob = new Blob([serialiseDocument()], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')}.vcs.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      dispatch({ type: 'SAVE_DOCUMENT' })
+    }, [serialiseDocument]),
     exportDocument: useCallback(() => dispatch({ type: 'EXPORT_DOCUMENT' }), []),
     setTool: useCallback((toolId) => dispatch({ type: 'SET_TOOL', payload: { toolId } }), []),
     setTab: useCallback((tab) => dispatch({ type: 'SET_TAB', payload: { tab } }), []),
