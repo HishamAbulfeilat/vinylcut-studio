@@ -15,6 +15,7 @@ import StepRepeatDialog from './components/StepRepeatDialog'
 import ShapeOperations from './components/ShapeOperations'
 import KeyboardShortcuts from './components/KeyboardShortcuts'
 import MasterPages from './components/MasterPages'
+import ExportDialog from './components/ExportDialog'
 import { AppProvider, useApp } from './context/AppContext'
 import './App.css'
 
@@ -195,7 +196,8 @@ function AppContent() {
       {dialog?.type === 'stepRepeat' && <StepRepeatDialog onClose={() => setDialog(null)} onApply={() => dispatch({ type: 'APPLY_STEP_REPEAT' })} />}
       {dialog?.type === 'shapeOps' && <ShapeOperations onClose={() => setDialog(null)} />}
       {dialog?.type === 'masterPages' && <MasterPages onClose={() => setDialog(null)} />}
-      {dialog && !['spooler', 'contour', 'align', 'gradient', 'texture', 'stepRepeat', 'shapeOps', 'masterPages'].includes(dialog.type) && (
+      {dialog?.type === 'export' && <ExportDialog onClose={() => setDialog(null)} />}
+      {dialog && !['spooler', 'contour', 'align', 'gradient', 'texture', 'stepRepeat', 'shapeOps', 'masterPages', 'export'].includes(dialog.type) && (
         <Dialog
           type={dialog.type}
           title={dialog.title}

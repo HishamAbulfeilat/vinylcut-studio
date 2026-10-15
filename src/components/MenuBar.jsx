@@ -18,7 +18,7 @@ export default function MenuBar({
         { label: 'Save', shortcut: 'Ctrl+S', action: onSave },
         { label: 'Save As...', shortcut: 'Ctrl+Shift+S', action: onSave },
         { type: 'separator' },
-        { label: 'Export...', shortcut: 'Ctrl+E', action: onExport },
+        { label: 'Export...', shortcut: 'Ctrl+E', action: () => window.dispatchEvent(new CustomEvent('openDialog', { detail: 'export' })) },
         { label: 'Print...', shortcut: 'Ctrl+P', action: onPrint },
       ]
     },
