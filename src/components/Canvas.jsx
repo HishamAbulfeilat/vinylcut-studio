@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
+import React, { useRef, useEffect, useLayoutEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { useApp } from '../context/AppContext'
 import { parsePathData, objectToSegments, subpathsBounds } from '../lib/geometry'
 import { warpSubpaths } from '../lib/warp'
@@ -91,6 +91,10 @@ const Canvas = forwardRef((props, ref) => {
   const { state, dispatch, actions } = useApp()
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
+  // The element that defines the document coordinate origin (object 0,0).
+  const pageRef = useRef(null)
+  // Where the page sits inside the container, so rulers can align with it.
+  const [pageOrigin, setPageOrigin] = useState({ x: 0, y: 0 })
   const [isDrawing, setIsDrawing] = useState(false)
   const [drawStart, setDrawStart] = useState({ x: 0, y: 0 })
   const [currentPos, setCurrentPos] = useState({ x: 0, y: 0 })
@@ -128,10 +132,17 @@ const Canvas = forwardRef((props, ref) => {
     }
   }, [objectAt, dispatch])
 
+  // Screen -> document coordinates.
+  //
+  // Objects are laid out inside `.page-boundary`, which the viewport centres
+  // with flexbox, so the page origin is NOT the canvas origin. Measuring from
+  // the canvas made every click land offset by the centring margin. Measure
+  // from the page itself instead (getBoundingClientRect is also scroll-aware,
+  // so a scrolled viewport stays correct).
   const getCanvasCoords = useCallback((e) => {
-    const canvas = canvasRef.current
-    if (!canvas) return { x: 0, y: 0 }
-    const rect = canvas.getBoundingClientRect()
+    const page = pageRef.current || canvasRef.current
+    if (!page) return { x: 0, y: 0 }
+    const rect = page.getBoundingClientRect()
     return {
       x: (e.clientX - rect.left) / state.zoom - state.panX,
       y: (e.clientY - rect.top) / state.zoom - state.panY,
@@ -424,6 +435,27 @@ const Canvas = forwardRef((props, ref) => {
     resizeObserver.observe(container)
     return () => resizeObserver.disconnect()
   }, [])
+
+  // Track where the (flex-centred) page sits inside the container so the
+  // rulers and their labels line up with the page, not the container edges.
+  useLayoutEffect(() => {
+    const measure = () => {
+      const page = pageRef.current
+      const container = containerRef.current
+      if (!page || !container) return
+      const p = page.getBoundingClientRect()
+      const c = container.getBoundingClientRect()
+      const x = Math.round(p.left - c.left)
+      const y = Math.round(p.top - c.top)
+      setPageOrigin(prev => (prev.x === x && prev.y === y ? prev : { x, y }))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    if (containerRef.current) ro.observe(containerRef.current)
+    if (pageRef.current) ro.observe(pageRef.current)
+    window.addEventListener('resize', measure)
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
+  }, [state.zoom, state.activePage, state.pages, state.showRulers])
 
   const renderShape = (obj, at) => {
     const scale = state.zoom
@@ -1139,14 +1171,14 @@ const Canvas = forwardRef((props, ref) => {
         <>
           <div className="ruler ruler-horizontal">
             {Array.from({ length: 100 }, (_, i) => (
-              <div key={i} className="ruler-tick" style={{ left: i * 50 * state.zoom }}>
+              <div key={i} className="ruler-tick" style={{ left: pageOrigin.x - 20 + i * 50 * state.zoom }}>
                 <span className="ruler-label">{i * 50}</span>
               </div>
             ))}
           </div>
           <div className="ruler ruler-vertical">
             {Array.from({ length: 100 }, (_, i) => (
-              <div key={i} className="ruler-tick" style={{ top: i * 50 * state.zoom }}>
+              <div key={i} className="ruler-tick" style={{ top: pageOrigin.y - 20 + i * 50 * state.zoom }}>
                 <span className="ruler-label">{i * 50}</span>
               </div>
             ))}
@@ -1154,7 +1186,7 @@ const Canvas = forwardRef((props, ref) => {
         </>
       )}
       <div className="canvas-viewport">
-        <div className="page-boundary" style={{
+        <div className="page-boundary" ref={pageRef} style={{
           width: (state.pages[state.activePage]?.width || 210) * state.zoom,
           height: (state.pages[state.activePage]?.height || 297) * state.zoom,
         }}>
