@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { useApp } from '../context/AppContext'
+import CropMarks from './CropMarks'
 import './Canvas.css'
 
 const Canvas = forwardRef((props, ref) => {
@@ -571,6 +572,7 @@ const Canvas = forwardRef((props, ref) => {
               )}
             </React.Fragment>
           ))}
+          <CropMarks />
           {renderNodeEditOverlay()}
           {isDrawing && (
             <div className="drawing-preview" style={{
