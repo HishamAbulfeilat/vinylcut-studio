@@ -1,0 +1,14 @@
+.app-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.main-workspace {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}

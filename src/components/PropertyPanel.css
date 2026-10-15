@@ -1,0 +1,109 @@
+.property-panel {
+  width: 260px;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.panel-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.panel-section {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-section h4 {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.property-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.property-row label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 50px;
+}
+
+.property-row input[type="number"],
+.property-row input[type="text"],
+.property-row select {
+  flex: 1;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text-primary);
+  padding: 4px 6px;
+  font-size: 11px;
+  border-radius: 3px;
+  min-width: 0;
+}
+
+.property-row input[type="color"] {
+  width: 32px;
+  height: 24px;
+  border: 1px solid var(--input-border);
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  background: none;
+}
+
+.property-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.property-row span {
+  font-size: 10px;
+  color: var(--text-secondary);
+  min-width: 30px;
+}
+
+.color-value {
+  font-family: monospace;
+  font-size: 10px;
+}
+
+.action-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.action-buttons button {
+  padding: 5px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 10px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.15s;
+}
+
+.action-buttons button:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}

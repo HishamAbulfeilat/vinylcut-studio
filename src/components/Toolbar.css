@@ -1,0 +1,62 @@
+.toolbar {
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--border);
+  padding: 2px 4px;
+  overflow: hidden;
+}
+
+.toolbar-scroll {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.toolbar-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.toolbar-scroll::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 2px;
+}
+
+.tool-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+  min-width: 48px;
+}
+
+.tool-button:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.tool-button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.tool-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.tool-name {
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 48px;
+}
