@@ -13,15 +13,16 @@ export default function KeyboardShortcuts() {
       const shift = e.shiftKey
       const alt = e.altKey
 
-      // File operations
+      // === FILE OPERATIONS ===
       if (ctrl && key === 'n') { e.preventDefault(); actions.newDocument() }
-      if (ctrl && key === 'o') { e.preventDefault(); /* open file */ }
+      if (ctrl && key === 'o') { e.preventDefault(); actions.loadFile() }
       if (ctrl && key === 's') { e.preventDefault(); actions.saveDocument() }
+      if (ctrl && shift && key === 's') { e.preventDefault(); actions.saveDocument() }
       if (ctrl && key === 'p') { e.preventDefault(); window.print() }
-      if (ctrl && key === 'i') { e.preventDefault(); /* import */ }
+      if (ctrl && key === 'i') { e.preventDefault(); actions.loadFile() }
       if (ctrl && key === 'e') { e.preventDefault(); actions.exportDocument() }
 
-      // Edit operations
+      // === EDIT OPERATIONS ===
       if (ctrl && key === 'z') { e.preventDefault(); actions.undo() }
       if (ctrl && key === 'y') { e.preventDefault(); actions.redo() }
       if (ctrl && key === 'x') { e.preventDefault(); actions.cutSelected() }
@@ -31,26 +32,34 @@ export default function KeyboardShortcuts() {
       if (ctrl && key === 'd') { e.preventDefault(); actions.duplicateSelected() }
       if (ctrl && key === 'g') { e.preventDefault(); actions.group() }
       if (ctrl && key === 'u') { e.preventDefault(); actions.ungroup() }
-      if (ctrl && key === 'q') { e.preventDefault(); /* convert to curves */ }
-      if (ctrl && key === 'l') { e.preventDefault(); /* lock object */ }
+      if (ctrl && shift && key === 'u') { e.preventDefault(); actions.ungroup() }
+      if (ctrl && key === 'q') { e.preventDefault(); actions.applyWeld() }
+      if (ctrl && key === 'l') { e.preventDefault(); /* lock */ }
       if (ctrl && key === 'w') { e.preventDefault(); /* wireframe */ }
+      if (ctrl && key === 'j') { e.preventDefault(); actions.applyWeld() }
 
-      // View
+      // === VIEW ===
       if (key === 'f3') { e.preventDefault(); actions.zoomIn() }
       if (key === 'f4') { e.preventDefault(); actions.zoomOut() }
       if (key === 'f5') { e.preventDefault(); actions.zoomToAll() }
       if (key === 'f6') { e.preventDefault(); actions.zoomToPage() }
+      if (key === 'f7') { e.preventDefault(); /* zoom to page width */ }
+      if (key === 'f8') { e.preventDefault(); /* zoom to page height */ }
       if (key === 'f1') { e.preventDefault(); /* help */ }
       if (key === 'f2') { e.preventDefault(); /* user settings */ }
+      if (key === 'f9') { e.preventDefault(); /* preview */ }
+      if (key === 'f10') { e.preventDefault(); /* spooler */ }
+      if (key === 'f11') { e.preventDefault(); /* contour cut */ }
+      if (key === 'f12') { e.preventDefault(); /* preferences */ }
 
-      // Snap
+      // === SNAP ===
       if (shift && alt && key === 'g') { e.preventDefault(); actions.toggleSnapGrid() }
       if (shift && alt && key === 'l') { e.preventDefault(); actions.toggleSnapGuides() }
       if (shift && alt && key === 'o') { e.preventDefault(); actions.toggleSnapObjects() }
       if (shift && alt && key === 'p') { e.preventDefault(); actions.toggleSnapPage() }
-      if (shift && alt && key === 'a') { e.preventDefault(); /* all snap */ }
+      if (shift && alt && key === 'a') { e.preventDefault(); actions.toggleSnapGrid(); actions.toggleSnapGuides(); actions.toggleSnapObjects() }
 
-      // Display
+      // === DISPLAY ===
       if (shift && ctrl && key === 'g') { e.preventDefault(); actions.toggleGrid() }
       if (shift && ctrl && key === 's') { e.preventDefault(); actions.toggleGuides() }
       if (shift && ctrl && key === 'r') { e.preventDefault(); actions.toggleRulers() }
@@ -60,51 +69,77 @@ export default function KeyboardShortcuts() {
       if (shift && ctrl && key === 'o') { e.preventDefault(); actions.setPageOrientation() }
       if (shift && ctrl && key === 't') { e.preventDefault(); /* dimensions */ }
 
-      // Align
+      // === ALIGN ===
       if (key === 'l' && !ctrl && !shift && !alt) { e.preventDefault(); actions.align('left') }
       if (key === 'r' && !ctrl && !shift && !alt) { e.preventDefault(); actions.align('right') }
       if (key === 't' && !ctrl && !shift && !alt) { e.preventDefault(); actions.align('top') }
       if (key === 'b' && !ctrl && !shift && !alt) { e.preventDefault(); actions.align('bottom') }
       if (key === 'e' && !ctrl && !shift && !alt) { e.preventDefault(); actions.align('centerH') }
       if (key === 'c' && !ctrl && !shift && !alt) { e.preventDefault(); actions.align('centerV') }
+      if (key === 'p' && !ctrl && !shift && !alt) { e.preventDefault(); /* align to page center */ }
 
-      // Z-order
+      // === Z-ORDER ===
       if (shift && e.key === 'PageUp') { e.preventDefault(); actions.bringToFront() }
       if (shift && e.key === 'PageDown') { e.preventDefault(); actions.sendToBack() }
       if (ctrl && e.key === 'PageUp') { e.preventDefault(); actions.bringForward() }
       if (ctrl && e.key === 'PageDown') { e.preventDefault(); actions.sendBackward() }
 
-      // Rotate
+      // === ROTATE ===
       if (ctrl && key === 'r') { e.preventDefault(); actions.rotate(90) }
 
-      // Mirror
+      // === MIRROR ===
       if (shift && ctrl && key === 'h') { e.preventDefault(); actions.mirrorX() }
       if (shift && ctrl && key === 'v') { e.preventDefault(); actions.mirrorY() }
 
-      // Delete
+      // === DELETE ===
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); actions.deleteSelected() }
 
-      // Select by
+      // === SELECT BY ===
       if (key === 's' && !ctrl && !shift && !alt) { e.preventDefault(); /* select by color */ }
       if (key === 'o' && !ctrl && !shift && !alt) { e.preventDefault(); /* select by type */ }
 
-      // Combine/Break
+      // === SHAPE OPERATIONS ===
       if (key === 'y' && !ctrl && !shift && !alt) { e.preventDefault(); actions.applyWeld() }
       if (key === 'z' && !ctrl && !shift && !alt) { e.preventDefault(); /* break apart */ }
 
-      // Node edit
+      // === NODE EDIT ===
       if (key === 'w' && !ctrl && !shift && !alt) { e.preventDefault(); /* break node */ }
       if (key === 'm' && !ctrl && !shift && !alt) { e.preventDefault(); /* smooth curve */ }
 
-      // Fill
-      if (ctrl && key === 'F1') { e.preventDefault(); /* solid fill */ }
+      // === FILL ===
+      if (ctrl && e.key === 'F1') { e.preventDefault(); actions.setFill({ type: 'solid' }) }
+      if (ctrl && e.key === 'F2') { e.preventDefault(); actions.setFill({ type: 'gradient' }) }
+      if (ctrl && e.key === 'F3') { e.preventDefault(); actions.setFill({ type: 'texture' }) }
+      if (ctrl && e.key === 'F4') { e.preventDefault(); actions.setFill({ type: 'none' }) }
 
-      // Spooler
+      // === SPOOLER ===
       if (shift && alt && key === 'v') { e.preventDefault(); /* vinyl spooler */ }
       if (shift && alt && key === 'f') { e.preventDefault(); /* contour cut */ }
+      if (alt && key === 'p') { e.preventDefault(); /* auto cut */ }
 
-      // Tutorials
+      // === TUTORIALS ===
       if (ctrl && key === 't') { e.preventDefault(); /* tutorials */ }
+
+      // === GUIDES ===
+      if (ctrl && key === '4') { e.preventDefault(); /* guide left */ }
+      if (ctrl && key === '6') { e.preventDefault(); /* guide right */ }
+      if (ctrl && key === '8') { e.preventDefault(); /* guide top */ }
+      if (ctrl && key === '2') { e.preventDefault(); /* guide bottom */ }
+      if (ctrl && key === '5') { e.preventDefault(); /* guide center h */ }
+      if (ctrl && key === '0') { e.preventDefault(); /* guide center v */ }
+
+      // === REGISTRATION MARKS ===
+      if (ctrl && key === '3') { e.preventDefault(); /* add registration marks */ }
+
+      // === NUMBER PAD ===
+      if (e.key === '+' || e.key === '=') { if (!ctrl && !shift) { e.preventDefault(); actions.duplicateSelected() } }
+      if (e.key === '-') { if (!ctrl && !shift) { e.preventDefault(); actions.deleteSelected() } }
+
+      // === ESC ===
+      if (e.key === 'Escape') { dispatch({ type: 'UPDATE_PROPERTY', payload: { property: 'selectedObject', value: null } }) }
+
+      // === ENTER ===
+      if (e.key === 'Enter' && state.selectedObject) { /* edit text */ }
     }
 
     window.addEventListener('keydown', handleKeyDown)
