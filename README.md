@@ -160,6 +160,20 @@ npm run build
 npm run preview
 ```
 
+### Desktop app
+The same codebase runs as a desktop application (Electron):
+```bash
+npm run build       # build the bundle the desktop host loads
+npm run desktop     # launch the desktop app
+```
+For hot-reload development, run `npm run dev` in one terminal and
+`npm run desktop:dev` in another.
+
+Native desktop capabilities — OS print pipeline, scanner acquisition, native USB/parallel cutter
+ports and installed-font enumeration — are reached through the host bridge (`src/platform`), which
+reports a capability as unavailable rather than faking it when the running host cannot provide it.
+See [docs/PARITY-PLAN.md](docs/PARITY-PLAN.md) for the parity roadmap.
+
 ## Technology Stack
 - React 18
 - Vite 5
@@ -167,6 +181,7 @@ npm run preview
 - DOM + SVG rendering surface with an HTML5 Canvas grid/backing layer
 - `polygon-clipping` for real boolean geometry and offsetting
 - WebSerial for cutter output (Chromium), with a `.plt` fallback
+- Electron for the desktop host (same bundle; native device and OS integration)
 
 ## Project Structure
 ```
