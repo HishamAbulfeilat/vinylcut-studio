@@ -120,6 +120,33 @@
   cursor: zoom-in;
 }
 
+.node-edit-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.node-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #fff;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  cursor: move;
+  pointer-events: all;
+  z-index: 21;
+}
+
+.node-handle:hover {
+  background: var(--accent);
+  transform: scale(1.3);
+}
+
 .ruler {
   position: absolute;
   background: var(--ruler-bg);

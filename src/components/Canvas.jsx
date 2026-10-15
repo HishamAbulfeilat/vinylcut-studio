@@ -14,6 +14,7 @@ const Canvas = forwardRef((props, ref) => {
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [dragObjStart, setDragObjStart] = useState({ x: 0, y: 0 })
+  const [nodeEditMode, setNodeEditMode] = useState(false)
 
   const getCanvasCoords = useCallback((e) => {
     const canvas = canvasRef.current
@@ -40,14 +41,7 @@ const Canvas = forwardRef((props, ref) => {
                coords.y >= obj.y && coords.y <= obj.y + obj.height
       })
       if (clickedObj) {
-        if (e.shiftKey) {
-          const newSelected = state.selectedObjects.includes(clickedObj.id)
-            ? state.selectedObjects.filter(id => id !== clickedObj.id)
-            : [...state.selectedObjects, clickedObj.id]
-          dispatch({ type: 'UPDATE_PROPERTY', payload: { property: 'selectedObject', value: clickedObj } })
-        } else {
-          dispatch({ type: 'UPDATE_PROPERTY', payload: { property: 'selectedObject', value: clickedObj } })
-        }
+        dispatch({ type: 'UPDATE_PROPERTY', payload: { property: 'selectedObject', value: clickedObj } })
         setIsDragging(true)
         setDragStart(coords)
         setDragObjStart({ x: clickedObj.x, y: clickedObj.y })
@@ -64,6 +58,7 @@ const Canvas = forwardRef((props, ref) => {
       })
       if (clickedObj) {
         dispatch({ type: 'UPDATE_PROPERTY', payload: { property: 'selectedObject', value: clickedObj } })
+        setNodeEditMode(true)
       }
       return
     }
@@ -74,48 +69,25 @@ const Canvas = forwardRef((props, ref) => {
       setDrawStart(coords)
       setCurrentPos(coords)
     }
-  }, [state.activeTool, state.objects, state.zoom, state.panX, state.panY, state.selectedObjects, getCanvasCoords, dispatch])
+  }, [state.activeTool, state.objects, state.zoom, state.panX, state.panY, getCanvasCoords, dispatch])
 
   const handleMouseMove = useCallback((e) => {
     const coords = getCanvasCoords(e)
     actions.setCursorPos(coords)
 
-    if (isPanning) {
-      const newPanX = (e.clientX - panStart.x) / state.zoom
-      const newPanY = (e.clientY - panStart.y) / state.zoom
-      dispatch({ type: 'SET_ZOOM', payload: state.zoom })
-      return
-    }
-
+    if (isPanning) return
     if (isDragging && state.selectedObject) {
       const dx = coords.x - dragStart.x
       const dy = coords.y - dragStart.y
-      const newObjects = state.objects.map(obj => {
-        if (obj.id === state.selectedObject.id) {
-          return { ...obj, x: dragObjStart.x + dx, y: dragObjStart.y + dy }
-        }
-        return obj
-      })
       dispatch({ type: 'UPDATE_OBJECT', payload: { id: state.selectedObject.id, updates: { x: dragObjStart.x + dx, y: dragObjStart.y + dy } } })
       return
     }
-
-    if (isDrawing) {
-      setCurrentPos(coords)
-    }
-  }, [isPanning, isDrawing, isDragging, dragStart, dragObjStart, state.selectedObject, state.objects, state.zoom, getCanvasCoords, actions, dispatch])
+    if (isDrawing) setCurrentPos(coords)
+  }, [isPanning, isDrawing, isDragging, dragStart, dragObjStart, state.selectedObject, getCanvasCoords, actions, dispatch])
 
   const handleMouseUp = useCallback((e) => {
-    if (isPanning) {
-      setIsPanning(false)
-      return
-    }
-
-    if (isDragging) {
-      setIsDragging(false)
-      return
-    }
-
+    if (isPanning) { setIsPanning(false); return }
+    if (isDragging) { setIsDragging(false); return }
     if (isDrawing) {
       const coords = getCanvasCoords(e)
       const x = Math.min(drawStart.x, coords.x)
@@ -127,8 +99,8 @@ const Canvas = forwardRef((props, ref) => {
         const toolMap = {
           rect: { type: 'rect', width, height },
           ellipse: { type: 'ellipse', width, height },
-          polygon: { type: 'polygon', width, height },
-          star: { type: 'star', width, height },
+          polygon: { type: 'polygon', width, height, points: 5 },
+          star: { type: 'star', width, height, points: 5, innerRadius: 50 },
           spiral: { type: 'spiral', width, height, turns: 5, direction: 'clockwise' },
           arrow: { type: 'arrow', width, height, arrowStyle: 'standard', headSize: 20, tailWidth: 5 },
           chaos: { type: 'chaos', width, height, complexity: 5, seed: Math.random() },
@@ -137,8 +109,8 @@ const Canvas = forwardRef((props, ref) => {
           freehand: { type: 'freehand', width, height },
           pen: { type: 'pen', width, height },
           text: { type: 'text', width: Math.max(width, 100), height: Math.max(height, 20), text: 'Text' },
-          textArc: { type: 'text', width: Math.max(width, 100), height: Math.max(height, 20), text: 'Arc Text', textOnArc: true },
-          textPath: { type: 'text', width: Math.max(width, 100), height: Math.max(height, 20), text: 'Path Text', textOnPath: true },
+          textArc: { type: 'text', width: Math.max(width, 100), height: Math.max(height, 20), text: 'Arc Text', textOnArc: true, arcRadius: 80, arcAngle: 180 },
+          textPath: { type: 'text', width: Math.max(width, 100), height: Math.max(height, 20), text: 'Path Text', textOnPath: true, pathData: 'M0,50 Q50,0 100,50' },
           textVert: { type: 'text', width: Math.max(width, 50), height: Math.max(height, 100), text: 'Vertical', verticalText: true },
           textBox: { type: 'text', width: Math.max(width, 150), height: Math.max(height, 100), text: 'Text Box', isTextBox: true },
           paragraph: { type: 'text', width: Math.max(width, 150), height: Math.max(height, 100), text: 'Paragraph text...', isParagraph: true },
@@ -226,13 +198,13 @@ const Canvas = forwardRef((props, ref) => {
         return <div style={{ ...baseStyle, borderRadius: '50%' }} />
 
       case 'polygon':
-      case 'powerPolygon':
-        const points = obj.points || 5
+      case 'powerPolygon': {
+        const pts = obj.points || 5
         return (
           <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }}>
             <polygon
-              points={Array.from({ length: points }, (_, i) => {
-                const angle = (i / points) * Math.PI * 2 - Math.PI / 2
+              points={Array.from({ length: pts }, (_, i) => {
+                const angle = (i / pts) * Math.PI * 2 - Math.PI / 2
                 return `${50 + Math.cos(angle) * 50},${50 + Math.sin(angle) * 50}`
               }).join(' ')}
               fill={fillColor}
@@ -241,16 +213,17 @@ const Canvas = forwardRef((props, ref) => {
             />
           </svg>
         )
+      }
 
       case 'star':
-      case 'powerStar':
-        const starPoints = obj.points || 5
+      case 'powerStar': {
+        const starPts = obj.points || 5
         const innerR = obj.innerRadius || 50
         return (
           <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }}>
             <polygon
-              points={Array.from({ length: starPoints * 2 }, (_, i) => {
-                const angle = (i / (starPoints * 2)) * Math.PI * 2 - Math.PI / 2
+              points={Array.from({ length: starPts * 2 }, (_, i) => {
+                const angle = (i / (starPts * 2)) * Math.PI * 2 - Math.PI / 2
                 const r = i % 2 === 0 ? 50 : innerR
                 return `${50 + Math.cos(angle) * r},${50 + Math.sin(angle) * r}`
               }).join(' ')}
@@ -260,6 +233,7 @@ const Canvas = forwardRef((props, ref) => {
             />
           </svg>
         )
+      }
 
       case 'spiral':
         return (
@@ -333,33 +307,116 @@ const Canvas = forwardRef((props, ref) => {
           </svg>
         )
 
-      case 'text':
+      case 'text': {
+        const textStyle = {
+          fontSize: (obj.fontSize || 16) * scale,
+          fontFamily: obj.fontFamily || 'Arial',
+          color: obj.fill?.color || '#000',
+          fontWeight: obj.bold ? 'bold' : 'normal',
+          fontStyle: obj.italic ? 'italic' : 'normal',
+          textDecoration: obj.underline ? 'underline' : 'none',
+          writingMode: obj.verticalText ? 'vertical-rl' : 'horizontal-tb',
+          textAlign: obj.align || 'left',
+          lineHeight: obj.lineSpacing || 1.2,
+          padding: '2px 4px',
+          borderRadius: '2px',
+          whiteSpace: obj.isParagraph ? 'normal' : 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: obj.align === 'center' ? 'center' : obj.align === 'right' ? 'flex-end' : 'flex-start',
+          flexDirection: obj.verticalText ? 'column' : 'row',
+        }
+
+        if (obj.textOnArc) {
+          const radius = (obj.arcRadius || 80) * scale
+          const startAngle = -((obj.arcAngle || 180) / 2) * Math.PI / 180
+          const endAngle = ((obj.arcAngle || 180) / 2) * Math.PI / 180
+          const text = obj.text || ''
+          const angleStep = (endAngle - startAngle) / Math.max(text.length - 1, 1)
+          const chars = text.split('').map((char, i) => {
+            const angle = startAngle + i * angleStep
+            return {
+              char,
+              x: 50 + Math.cos(angle) * (radius / (obj.width * scale) * 100),
+              y: 50 + Math.sin(angle) * (radius / (obj.height * scale) * 100),
+              rotation: angle * 180 / Math.PI + 90,
+            }
+          })
+          return (
+            <div style={{ position: 'absolute', left, top, width, height }}>
+              <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+                {chars.map((c, i) => (
+                  <text
+                    key={i}
+                    x={`${c.x}%`}
+                    y={`${c.y}%`}
+                    fill={obj.fill?.color || '#000'}
+                    fontSize={(obj.fontSize || 16) * scale}
+                    fontFamily={obj.fontFamily || 'Arial'}
+                    transform={`rotate(${c.rotation} ${c.x}% ${c.y}%)`}
+                    textAnchor="middle"
+                  >
+                    {c.char}
+                  </text>
+                ))}
+              </svg>
+            </div>
+          )
+        }
+
+        if (obj.textOnPath) {
+          return (
+            <div style={{ position: 'absolute', left, top, width, height }}>
+              <svg width={width} height={height}>
+                <defs>
+                  <path id={`textPath-${obj.id}`} d={obj.pathData || 'M0,50 Q50,0 100,50'} fill="none" />
+                </defs>
+                <text
+                  fill={obj.fill?.color || '#000'}
+                  fontSize={(obj.fontSize || 16) * scale}
+                  fontFamily={obj.fontFamily || 'Arial'}
+                  fontWeight={obj.bold ? 'bold' : 'normal'}
+                  fontStyle={obj.italic ? 'italic' : 'normal'}
+                >
+                  <textPath href={`#textPath-${obj.id}`} startOffset="50%" textAnchor="middle">
+                    {obj.text || ''}
+                  </textPath>
+                </text>
+              </svg>
+            </div>
+          )
+        }
+
+        if (obj.isParagraph) {
+          return (
+            <div style={{ ...baseStyle, overflow: 'hidden' }}>
+              <div style={{
+                columns: obj.paragraphSettings?.columns || 1,
+                columnGap: `${(obj.paragraphSettings?.gutter || 0.5) * scale}px`,
+                fontSize: (obj.fontSize || 16) * scale,
+                fontFamily: obj.fontFamily || 'Arial',
+                color: obj.fill?.color || '#000',
+                textAlign: obj.align || 'left',
+                lineHeight: obj.lineSpacing || 1.2,
+                padding: '4px',
+                columnFill: 'auto',
+              }}>
+                {obj.text}
+              </div>
+            </div>
+          )
+        }
+
         return (
-          <div style={{
-            ...baseStyle,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexDirection: obj.verticalText ? 'column' : 'row',
-          }}>
-            <span style={{
-              fontSize: (obj.fontSize || 16) * scale,
-              fontFamily: obj.fontFamily || 'Arial',
-              color: obj.fill?.color || '#000',
-              fontWeight: obj.bold ? 'bold' : 'normal',
-              fontStyle: obj.italic ? 'italic' : 'normal',
-              textDecoration: obj.underline ? 'underline' : 'none',
-              writingMode: obj.verticalText ? 'vertical-rl' : 'horizontal-tb',
-              textAlign: obj.align || 'left',
-              lineHeight: obj.lineSpacing || 1.2,
-              background: obj.fill?.type === 'solid' ? 'none' : fillColor,
-              padding: '2px 4px',
-              borderRadius: '2px',
-            }}>
+          <div style={{ ...baseStyle, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={textStyle}>
               {obj.text}
             </span>
           </div>
         )
+      }
 
       case 'image':
         return (
@@ -392,6 +449,69 @@ const Canvas = forwardRef((props, ref) => {
       default:
         return <div style={baseStyle} />
     }
+  }
+
+  const renderNodeEditOverlay = () => {
+    if (!nodeEditMode || !state.selectedObject) return null
+    const obj = state.selectedObject
+    const scale = state.zoom
+    const left = obj.x * scale + state.panX * scale
+    const top = obj.y * scale + state.panY * scale
+    const width = obj.width * scale
+    const height = obj.height * scale
+
+    const nodes = [
+      { x: left, y: top, id: 'tl' },
+      { x: left + width / 2, y: top, id: 'tm' },
+      { x: left + width, y: top, id: 'tr' },
+      { x: left, y: top + height / 2, id: 'ml' },
+      { x: left + width, y: top + height / 2, id: 'mr' },
+      { x: left, y: top + height, id: 'bl' },
+      { x: left + width / 2, y: top + height, id: 'bm' },
+      { x: left + width, y: top + height, id: 'br' },
+    ]
+
+    return (
+      <div className="node-edit-overlay">
+        {nodes.map(node => (
+          <div
+            key={node.id}
+            className="node-handle"
+            style={{ left: node.x - 4, top: node.y - 4 }}
+            onMouseDown={(e) => {
+              e.stopPropagation()
+              const startX = e.clientX
+              const startY = e.clientY
+              const origX = obj.x
+              const origY = obj.y
+              const origW = obj.width
+              const origH = obj.height
+
+              const onMove = (moveEvent) => {
+                const dx = (moveEvent.clientX - startX) / scale
+                const dy = (moveEvent.clientY - startY) / scale
+                let newX = origX, newY = origY, newW = origW, newH = origH
+
+                if (node.id.includes('l')) { newX = origX + dx; newW = origW - dx }
+                if (node.id.includes('r')) { newW = origW + dx }
+                if (node.id.includes('t')) { newY = origY + dy; newH = origH - dy }
+                if (node.id.includes('b')) { newH = origH + dy }
+
+                dispatch({ type: 'UPDATE_OBJECT', payload: { id: obj.id, updates: { x: newX, y: newY, width: newW, height: newH } } })
+              }
+
+              const onUp = () => {
+                window.removeEventListener('mousemove', onMove)
+                window.removeEventListener('mouseup', onUp)
+              }
+
+              window.addEventListener('mousemove', onMove)
+              window.addEventListener('mouseup', onUp)
+            }}
+          />
+        ))}
+      </div>
+    )
   }
 
   return (
@@ -436,8 +556,8 @@ const Canvas = forwardRef((props, ref) => {
               {state.selectedObjects.includes(obj.id) && (
                 <div className="selection-box" style={{
                   position: 'absolute',
-                  left: obj.x * state.zoom + state.panX * state.zoom - 2,
-                  top: obj.y * state.zoom + state.panY * state.zoom - 2,
+                  left: obj.x * state.zoom + state.panX * scale - 2,
+                  top: obj.y * state.zoom + state.panY * scale - 2,
                   width: obj.width * state.zoom + 4,
                   height: obj.height * state.zoom + 4,
                   border: '2px solid var(--selection)',
@@ -451,6 +571,7 @@ const Canvas = forwardRef((props, ref) => {
               )}
             </React.Fragment>
           ))}
+          {renderNodeEditOverlay()}
           {isDrawing && (
             <div className="drawing-preview" style={{
               left: Math.min(drawStart.x, currentPos.x) * state.zoom + state.panX * state.zoom,
