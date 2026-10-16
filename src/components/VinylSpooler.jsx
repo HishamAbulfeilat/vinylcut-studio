@@ -1,12 +1,32 @@
 import React, { useState } from 'react'
 import { useApp } from '../context/AppContext'
 import { CUTTER_PROFILES } from '../lib/cutter'
+import { objectToMultiPolygon, multiPolygonBounds } from '../lib/geometry'
+import { nestRects } from '../lib/nesting'
 import './VinylSpooler.css'
+
+const CLONE_TYPES = ['clone', 'cloneArray', 'cloneCircle']
+
+// Shift the points of a rings array (MultiPolygon or ring depth) by (dx, dy).
+const shiftRings = (rings, dx, dy) => rings.map(r =>
+  Array.isArray(r[0]) && Array.isArray(r[0][0])
+    ? shiftRings(r, dx, dy)
+    : r.map(([px, py]) => [px + dx, py + dy])
+)
+
+// Copy of `obj` translated by (dx, dy). Geometry is driven by x/y, but baked
+// `rings` (imported / traced shapes) are moved too so both stay in step.
+const translateObject = (obj, dx, dy) => {
+  const moved = { ...obj, x: (obj.x || 0) + dx, y: (obj.y || 0) + dy }
+  if (Array.isArray(obj.rings) && obj.rings.length) moved.rings = shiftRings(obj.rings, dx, dy)
+  return moved
+}
 
 export default function VinylSpooler({ onClose }) {
   const { state, actions } = useApp()
   const [jobs, setJobs] = useState([])
   const [selectedJob, setSelectedJob] = useState(null)
+  const [nested, setNested] = useState(null)
   const [settings, setSettings] = useState({
     speed: 50,
     force: 80,
@@ -16,7 +36,12 @@ export default function VinylSpooler({ onClose }) {
     mediaSupplies: 'roll',
     cutterModel: CUTTER_PROFILES[0].id,
     downloadOnly: false,
+    gap: 2,
+    mediaWidth: null,
   })
+
+  const page = state.pages[state.activePage] || { width: 210, height: 297 }
+  const mediaWidth = settings.mediaWidth != null ? settings.mediaWidth : Math.round(page.width)
 
   const addJob = () => {
     const page = state.pages[state.activePage] || { width: 210, height: 297 }
@@ -39,12 +64,77 @@ export default function VinylSpooler({ onClose }) {
     setSelectedJob(newJob.id)
   }
 
+  // Shapes eligible for nesting: the selection, or the whole page when empty.
+  const selectedShapes = () => {
+    const ids = state.selectedObjects || []
+    const pool = state.objects.filter(o => !CLONE_TYPES.includes(o.type))
+    return ids.length ? pool.filter(o => ids.includes(o.id)) : pool
+  }
+
+  // Pack the selected shapes' bounding boxes into the media width. Returns the
+  // placements plus translated object copies ready to cut.
+  const computeNesting = () => {
+    const shapes = selectedShapes()
+    if (!shapes.length) {
+      actions.notify('Nothing to nest - the page is empty', 'warn')
+      return null
+    }
+    const meta = new Map()
+    const items = []
+    for (const o of shapes) {
+      const bbox = multiPolygonBounds(objectToMultiPolygon(o))
+      if (!bbox) continue
+      items.push({ id: o.id, width: bbox.width, height: bbox.height })
+      meta.set(o.id, { obj: o, bbox })
+    }
+    if (!items.length) {
+      actions.notify('Nothing to nest - the page is empty', 'warn')
+      return null
+    }
+    const res = nestRects(items, { width: mediaWidth, gap: settings.gap })
+    const objects = res.placements
+      .map(p => {
+        const m = meta.get(p.id)
+        return m ? translateObject(m.obj, p.x - m.bbox.minX, p.y - m.bbox.minY) : null
+      })
+      .filter(Boolean)
+    if (res.overflow.length) {
+      actions.notify(`${res.overflow.length} shape(s) wider than the media - left out of the nest`, 'warn')
+    }
+    return { ...res, mediaWidth, objects, meta }
+  }
+
+  const previewNesting = () => {
+    const res = computeNesting()
+    if (res) setNested(res)
+  }
+
+  const sendNested = async () => {
+    const res = computeNesting()
+    if (!res) return
+    setNested(res)
+    const job = {
+      id: Date.now(),
+      name: `${(state.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')} (nested)`,
+      status: 'ready',
+      progress: 0,
+      paths: res.placements.length,
+      material: 'Nested',
+      size: `${Math.round(res.mediaWidth)}x${Math.round(res.height)}mm`,
+      profile: settings.cutterModel,
+    }
+    setJobs(list => [...list, job])
+    setSelectedJob(job.id)
+    await startCut(job.id, res.objects)
+  }
+
   // Real output: stream dialect-specific cut data to the cutter over
   // WebSerial (per-vendor init/status), or save a .plt file.
-  const startCut = async (jobId) => {
+  const startCut = async (jobId, overrideObjects) => {
     setJobs(list => list.map(j => (j.id === jobId ? { ...j, status: 'cutting', progress: 0 } : j)))
     const target = jobs.find(j => j.id === jobId)
     const result = await actions.sendToCutter({
+      objects: overrideObjects,
       speed: Math.round(settings.speed / 5) || 20,
       force: Math.round(settings.force / 10) || 10,
       cutterModel: (target && target.profile) || settings.cutterModel,
@@ -168,6 +258,51 @@ export default function VinylSpooler({ onClose }) {
                   </label>
                 </div>
               </div>
+            </div>
+          </div>
+          <div className="nesting-panel">
+            <div className="nesting-controls">
+              <h4>Nesting</h4>
+              <div className="setting-row">
+                <label>Gap:</label>
+                <input type="number" min="0" step="0.5" value={settings.gap}
+                  onChange={e => setSettings({ ...settings, gap: Math.max(0, parseFloat(e.target.value) || 0) })} />
+                <span>mm</span>
+              </div>
+              <div className="setting-row">
+                <label>Media width:</label>
+                <input type="number" min="1" step="1" value={mediaWidth}
+                  onChange={e => setSettings({ ...settings, mediaWidth: Math.max(1, parseFloat(e.target.value) || 1) })} />
+                <span>mm</span>
+              </div>
+              <div className="setting-row">
+                <button className="btn btn-sm" onClick={previewNesting}>Preview Nest</button>
+                <button className="btn btn-sm" onClick={sendNested} disabled={!selectedShapes().length}>Send Nested Job</button>
+              </div>
+              {nested && (
+                <span className="nesting-summary">
+                  {nested.placements.length} shapes · {Math.round(nested.width)} x {Math.round(nested.height)} mm
+                </span>
+              )}
+            </div>
+            <div className="nesting-preview">
+              {nested && nested.placements.length ? (
+                <svg
+                  className="nesting-svg"
+                  viewBox={`0 0 ${Math.max(1, nested.mediaWidth)} ${Math.max(1, nested.height)}`}
+                  preserveAspectRatio="xMidYMid meet"
+                >
+                  <rect x="0" y="0" width={nested.mediaWidth} height={Math.max(1, nested.height)}
+                    fill="none" stroke="var(--border)" vectorEffect="non-scaling-stroke" />
+                  {nested.placements.map(p => (
+                    <rect key={p.id} x={p.x} y={p.y} width={p.width} height={p.height}
+                      fill={(nested.meta.get(p.id)?.obj?.fill?.color) || '#ff8000'} fillOpacity="0.35"
+                      stroke="var(--accent)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  ))}
+                </svg>
+              ) : (
+                <span className="nesting-empty">No layout yet - set the gap and preview.</span>
+              )}
             </div>
           </div>
           <div className="spooler-actions">

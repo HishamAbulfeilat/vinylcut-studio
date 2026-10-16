@@ -1494,9 +1494,12 @@ export function AppProvider({ children }) {
   // .plt file when the browser has no serial support / the user cancels.
   const sendToCutter = useCallback(async (options = {}) => {
     const s = stateRef.current
-    const objects = s.selectedObjects.length
-      ? s.objects.filter(o => s.selectedObjects.includes(o.id))
-      : s.objects
+    // Callers (e.g. the spooler's nested job) may supply their own objects.
+    const objects = Array.isArray(options.objects) && options.objects.length
+      ? options.objects
+      : (s.selectedObjects.length
+        ? s.objects.filter(o => s.selectedObjects.includes(o.id))
+        : s.objects)
     if (!objects.length) {
       notify('Nothing to cut - the page is empty', 'warn')
       return null

@@ -197,6 +197,49 @@
   border-top: 1px solid var(--border);
 }
 
+.nesting-panel {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.nesting-controls {
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nesting-controls h4 {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.nesting-preview {
+  flex: 1;
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+}
+
+.nesting-svg {
+  width: 100%;
+  height: 96px;
+}
+
+.nesting-empty,
+.nesting-summary {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
 .btn {
   padding: 6px 14px;
   border: 1px solid var(--border);
