@@ -57,6 +57,8 @@ export function createDesktopBackend(bridge) {
     },
 
     printDocument: (opts = {}) => bridge.print.document(opts),
+    printToPdf: (filePath, opts = {}) => bridge.print.toPdf(filePath, opts),
+    listPrinters: () => bridge.print.listPrinters(),
 
     cutter: {
       available: () => true,
