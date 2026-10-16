@@ -155,6 +155,17 @@ function AppContent() {
     return () => clearTimeout(t)
   }, [toast])
 
+  // Bounding-box size of the current selection, shown in the status bar.
+  const selectionSize = React.useMemo(() => {
+    const selected = state.objects.filter(o => state.selectedObjects.includes(o.id))
+    if (!selected.length) return null
+    const minX = Math.min(...selected.map(o => o.x || 0))
+    const minY = Math.min(...selected.map(o => o.y || 0))
+    const maxX = Math.max(...selected.map(o => (o.x || 0) + (o.width || 0)))
+    const maxY = Math.max(...selected.map(o => (o.y || 0) + (o.height || 0)))
+    return { width: maxX - minX, height: maxY - minY }
+  }, [state.objects, state.selectedObjects])
+
   return (
     <div className="app-container">
       <KeyboardShortcuts />
@@ -184,6 +195,7 @@ function AppContent() {
         tools={tools}
         activeTool={state.activeTool}
         onToolChange={handleToolChange}
+        activeTab={state.activeTab}
       />
       <div className="main-workspace">
         <Canvas ref={canvasRef} />
@@ -197,6 +209,7 @@ function AppContent() {
         cursorPos={state.cursorPos}
         objectCount={state.objects.length}
         selectedCount={state.selectedObjects.length}
+        selectionSize={selectionSize}
         pageCount={state.pages.length}
         activePage={state.activePage}
         tool={state.activeTool}

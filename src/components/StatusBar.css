@@ -26,3 +26,7 @@
 .status-label {
   color: var(--text-secondary);
 }
+
+.status-size {
+  color: var(--text-secondary);
+}

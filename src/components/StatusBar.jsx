@@ -6,6 +6,7 @@ export default function StatusBar({
   cursorPos,
   objectCount,
   selectedCount,
+  selectionSize,
   pageCount,
   activePage,
   tool
@@ -21,6 +22,11 @@ export default function StatusBar({
         </span>
         <span className="status-item">
           <span className="status-label">Selected:</span> {selectedCount}
+          {selectionSize && (
+            <span className="status-size">
+              ({Math.round(selectionSize.width)} × {Math.round(selectionSize.height)} mm)
+            </span>
+          )}
         </span>
         <span className="status-item">
           <span className="status-label">Page:</span> {activePage + 1} of {pageCount}

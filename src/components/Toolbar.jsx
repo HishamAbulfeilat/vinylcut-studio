@@ -12,11 +12,33 @@ export const POWER_SHAPE_TOOLS = [
   { id: 'powerPolygon', name: 'Power Poly', icon: '⬠' },
 ]
 
-export default function Toolbar({ tools = [], activeTool, onToolChange }) {
+// The shell's tool strip is stage-dependent (docs/SHELL-SPEC.md §1): each stage
+// tab offers the tools that belong to that task, while the Design stage keeps
+// the full drawing surface. `null` means "the whole catalog".
+export const STAGE_TOOLS = {
+  design: null,
+  cut: ['select', 'node', 'pan', 'zoom', 'line', 'curve', 'knife', 'contour', 'dimension'],
+  print: ['select', 'pan', 'zoom', 'image', 'dimension'],
+  layout: ['select', 'pan', 'zoom', 'clone', 'cloneArray', 'cloneCircle', 'dimension'],
+  effects: ['select', 'pan', 'zoom', 'fill', 'eraser', 'outline', 'shadow', 'glow', '3d', 'warpCircle', 'warpFlag', 'warpWave'],
+}
+
+export function toolsForStage(stage, tools) {
+  const ids = STAGE_TOOLS[stage]
+  if (!ids) return tools
+  const byId = new Map(tools.map((tool) => [tool.id, tool]))
+  return ids.map((id) => byId.get(id)).filter(Boolean)
+}
+
+export default function Toolbar({ tools = [], activeTool, onToolChange, activeTab = 'design' }) {
   const merged = React.useMemo(() => {
-    const present = new Set(tools.map((tool) => tool.id))
-    return [...tools, ...POWER_SHAPE_TOOLS.filter((tool) => !present.has(tool.id))]
-  }, [tools])
+    const scoped = toolsForStage(activeTab, tools)
+    const present = new Set(scoped.map((tool) => tool.id))
+    const extras = activeTab === 'design'
+      ? POWER_SHAPE_TOOLS.filter((tool) => !present.has(tool.id))
+      : []
+    return [...scoped, ...extras]
+  }, [tools, activeTab])
 
   return (
     <div className="toolbar">
