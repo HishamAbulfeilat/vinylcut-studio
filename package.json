@@ -10,7 +10,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "desktop": "electron .",
-    "desktop:dev": "electron . --dev"
+    "desktop:dev": "electron . --dev",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "polygon-clipping": "^0.15.7",
@@ -20,6 +22,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
     "electron": "^44.7.2",
-    "vite": "^5.0.8"
+    "vite": "^5.0.8",
+    "vitest": "^2.1.9"
   }
 }
