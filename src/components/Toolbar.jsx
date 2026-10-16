@@ -1,11 +1,27 @@
 import React from 'react'
 import './Toolbar.css'
 
-export default function Toolbar({ tools, activeTool, onToolChange }) {
+// Power Shapes are part of the core tool surface. Declaring them here keeps
+// the toolbar self-sufficient: if a host omits them from `tools`, they are
+// still offered, and any host-provided entry wins so metadata is never
+// duplicated.
+export const POWER_SHAPE_TOOLS = [
+  { id: 'powerRect', name: 'Power Rect', icon: '▣' },
+  { id: 'powerCircle', name: 'Power Circle', icon: '◉' },
+  { id: 'powerStar', name: 'Power Star', icon: '★' },
+  { id: 'powerPolygon', name: 'Power Poly', icon: '⬠' },
+]
+
+export default function Toolbar({ tools = [], activeTool, onToolChange }) {
+  const merged = React.useMemo(() => {
+    const present = new Set(tools.map((tool) => tool.id))
+    return [...tools, ...POWER_SHAPE_TOOLS.filter((tool) => !present.has(tool.id))]
+  }, [tools])
+
   return (
     <div className="toolbar">
       <div className="toolbar-scroll">
-        {tools.map((tool) => (
+        {merged.map((tool) => (
           <button
             key={tool.id}
             className={`tool-button ${activeTool === tool.id ? 'active' : ''}`}

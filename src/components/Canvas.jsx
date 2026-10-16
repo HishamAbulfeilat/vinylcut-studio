@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useLayoutEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { useApp } from '../context/AppContext'
 import { parsePathData, objectToSegments, subpathsBounds } from '../lib/geometry'
+import { polygonPoints, starPoints, chaosStarPoints, archimedeanSpiralPoints } from '../lib/powershapes'
 import { warpSubpaths } from '../lib/warp'
 import RasterWarp from './RasterWarp'
 import CropMarks from './CropMarks'
@@ -86,6 +87,9 @@ function svgFill(fill, id) {
   }
   return { fill: 'none', defs: null }
 }
+
+// Points (from the Power Shapes generators) -> SVG polygon `points` string.
+const toPointString = (pts) => pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ')
 
 const Canvas = forwardRef((props, ref) => {
   const { state, dispatch, actions } = useApp()
@@ -203,7 +207,7 @@ const Canvas = forwardRef((props, ref) => {
       return
     }
 
-    const drawableTools = ['rect', 'ellipse', 'polygon', 'star', 'spiral', 'arrow', 'chaos', 'line', 'curve', 'freehand', 'pen', 'text', 'textArc', 'textPath', 'textVert', 'textBox', 'paragraph', 'dimension']
+    const drawableTools = ['rect', 'ellipse', 'polygon', 'star', 'spiral', 'arrow', 'chaos', 'powerRect', 'powerCircle', 'powerStar', 'powerPolygon', 'line', 'curve', 'freehand', 'pen', 'text', 'textArc', 'textPath', 'textVert', 'textBox', 'paragraph', 'dimension']
 
     // --- Knife: drag a cutting line ----------------------------------
     if (state.activeTool === 'knife') {
@@ -374,6 +378,10 @@ const Canvas = forwardRef((props, ref) => {
           spiral: { type: 'spiral', width, height, turns: 5, direction: 'clockwise' },
           arrow: { type: 'arrow', width, height, arrowStyle: 'standard', headSize: 20, tailWidth: 5 },
           chaos: { type: 'chaos', width, height, complexity: 5, seed: Math.random() },
+          powerRect: { type: 'powerRect', width, height },
+          powerCircle: { type: 'powerCircle', width, height },
+          powerStar: { type: 'powerStar', width, height, points: 5, innerRadius: 50 },
+          powerPolygon: { type: 'powerPolygon', width, height, points: 5 },
           line: { type: 'line', width, height },
           curve: { type: 'curve', width, height },
           freehand: { type: 'freehand', width, height },
@@ -490,15 +498,12 @@ const Canvas = forwardRef((props, ref) => {
 
       case 'polygon':
       case 'powerPolygon': {
-        const pts = obj.points || 5
+        const pts = polygonPoints({ sides: obj.points || 5 })
         return (
-          <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }}>
+          <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }} viewBox="0 0 100 100" preserveAspectRatio="none">
             <defs>{svgF.defs}</defs>
             <polygon
-              points={Array.from({ length: pts }, (_, i) => {
-                const angle = (i / pts) * Math.PI * 2 - Math.PI / 2
-                return `${50 + Math.cos(angle) * 50},${50 + Math.sin(angle) * 50}`
-              }).join(' ')}
+              points={toPointString(pts)}
               fill={svgF.fill}
               stroke={obj.stroke?.width > 0 ? obj.stroke.color : 'none'}
               strokeWidth={obj.stroke?.width || 0}
@@ -509,17 +514,12 @@ const Canvas = forwardRef((props, ref) => {
 
       case 'star':
       case 'powerStar': {
-        const starPts = obj.points || 5
-        const innerR = obj.innerRadius || 50
+        const pts = starPoints({ points: obj.points || 5, innerRadius: obj.innerRadius || 50 })
         return (
-          <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }}>
+          <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }} viewBox="0 0 100 100" preserveAspectRatio="none">
             <defs>{svgF.defs}</defs>
             <polygon
-              points={Array.from({ length: starPts * 2 }, (_, i) => {
-                const angle = (i / (starPts * 2)) * Math.PI * 2 - Math.PI / 2
-                const r = i % 2 === 0 ? 50 : innerR
-                return `${50 + Math.cos(angle) * r},${50 + Math.sin(angle) * r}`
-              }).join(' ')}
+              points={toPointString(pts)}
               fill={svgF.fill}
               stroke={obj.stroke?.width > 0 ? obj.stroke.color : 'none'}
               strokeWidth={obj.stroke?.width || 0}
@@ -528,21 +528,20 @@ const Canvas = forwardRef((props, ref) => {
         )
       }
 
-      case 'spiral':
+      case 'spiral': {
+        const pts = archimedeanSpiralPoints({ turns: obj.turns || 5, spacing: obj.spacing })
+        const d = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ')
         return (
-          <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }}>
+          <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }} viewBox="0 0 100 100" preserveAspectRatio="none">
             <path
-              d={`M50,50 ${Array.from({ length: (obj.turns || 5) * 20 }, (_, i) => {
-                const angle = (i / 20) * Math.PI * 2
-                const r = (i / ((obj.turns || 5) * 20)) * 45
-                return `L${50 + Math.cos(angle) * r},${50 + Math.sin(angle) * r}`
-              }).join(' ')}`}
+              d={d}
               fill="none"
               stroke={obj.stroke?.color || '#000'}
               strokeWidth={obj.stroke?.width || 1}
             />
           </svg>
         )
+      }
 
       case 'arrow':
         return (
@@ -588,18 +587,25 @@ const Canvas = forwardRef((props, ref) => {
           </svg>
         )
 
-      case 'chaos':
+      case 'chaos': {
+        const pts = chaosStarPoints({
+          points: obj.points || obj.complexity || 5,
+          innerRadius: obj.innerRadius || 50,
+          seed: obj.seed,
+          jitter: obj.jitter == null ? 0.4 : obj.jitter,
+        })
         return (
-          <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }}>
+          <svg style={{ position: 'absolute', left, top, width, height, transform: `rotate(${obj.rotation || 0}deg)` }} viewBox="0 0 100 100" preserveAspectRatio="none">
             <defs>{svgF.defs}</defs>
-            <path
-              d={`M${50 + (obj.seed || 0.5) * 30},${50 - (obj.seed || 0.5) * 30} L${50 - 40},${50 + (obj.seed || 0.5) * 20} L${50 + (obj.seed || 0.5) * 20},${50 + 40} Z`}
+            <polygon
+              points={toPointString(pts)}
               fill={svgF.fill}
               stroke={obj.stroke?.width > 0 ? obj.stroke.color : 'none'}
               strokeWidth={obj.stroke?.width || 0}
             />
           </svg>
         )
+      }
 
       case 'text': {
         const textStyle = {

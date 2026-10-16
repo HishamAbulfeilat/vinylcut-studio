@@ -7,6 +7,14 @@ export default function PropertyPanel({ selectedObject, onPropertyChange }) {
   const [activeSection, setActiveSection] = useState('position')
   // Effects live on the selected object; fall back to the pending defaults.
   const eff = (selectedObject && selectedObject.effect) || state.currentEffect
+  // Power Shapes editors are driven by the selected object's type.
+  const objType = selectedObject?.type
+  const isStar = objType === 'star' || objType === 'powerStar'
+  const isPolygon = objType === 'polygon' || objType === 'powerPolygon'
+  const isChaos = objType === 'chaos'
+  const isSpiral = objType === 'spiral'
+  const innerRadius = selectedObject?.innerRadius ?? 50
+  const jitter = selectedObject?.jitter ?? 0.4
 
   const handleChange = (property, value) => {
     if (property.startsWith('fill.')) {
@@ -38,6 +46,7 @@ export default function PropertyPanel({ selectedObject, onPropertyChange }) {
     { id: 'clone', label: 'Clone' },
     { id: 'stepRepeat', label: 'Step & Repeat' },
     { id: 'warp', label: 'Warp' },
+    { id: 'powerShapes', label: 'Power Shapes' },
     { id: 'dimension', label: 'Dimension' },
     { id: 'pen', label: 'Pen Style' },
     { id: 'trace', label: 'Vectorize' },
@@ -670,6 +679,91 @@ export default function PropertyPanel({ selectedObject, onPropertyChange }) {
               }}>Vectorize Image</button>
               <button onClick={() => window.dispatchEvent(new CustomEvent('openDialog', { detail: 'vectorize' }))}>Trace Options…</button>
             </div>
+          </div>
+        )}
+
+        {activeSection === 'powerShapes' && (
+          <div className="panel-section">
+            <h4>Power Shapes</h4>
+            {(isPolygon || isStar || isChaos) && (
+              <div className="property-row">
+                <label>Points:</label>
+                <input
+                  type="number"
+                  min="3"
+                  max="60"
+                  value={selectedObject?.points || 5}
+                  onChange={(e) => handleChange('points', Math.max(3, parseInt(e.target.value) || 5))}
+                />
+              </div>
+            )}
+            {(isStar || isChaos) && (
+              <div className="property-row">
+                <label>Inner Radius:</label>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={innerRadius}
+                  onChange={(e) => handleChange('innerRadius', parseInt(e.target.value))}
+                />
+                <span>{innerRadius}%</span>
+              </div>
+            )}
+            {isChaos && (
+              <>
+                <div className="property-row">
+                  <label>Seed:</label>
+                  <input
+                    type="text"
+                    value={selectedObject?.seed ?? ''}
+                    onChange={(e) => handleChange('seed', e.target.value)}
+                  />
+                  <button onClick={() => handleChange('seed', Math.random())}>New</button>
+                </div>
+                <div className="property-row">
+                  <label>Jitter:</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={jitter}
+                    onChange={(e) => handleChange('jitter', parseFloat(e.target.value))}
+                  />
+                  <span>{Math.round(jitter * 100)}%</span>
+                </div>
+              </>
+            )}
+            {isSpiral && (
+              <>
+                <div className="property-row">
+                  <label>Turns:</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="50"
+                    value={selectedObject?.turns || 5}
+                    onChange={(e) => handleChange('turns', Math.max(1, parseInt(e.target.value) || 5))}
+                  />
+                </div>
+                <div className="property-row">
+                  <label>Spacing:</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={selectedObject?.spacing ?? ''}
+                    placeholder="auto"
+                    onChange={(e) => handleChange('spacing', e.target.value === '' ? null : parseFloat(e.target.value))}
+                  />
+                  <span>per turn</span>
+                </div>
+              </>
+            )}
+            {!isPolygon && !isStar && !isChaos && !isSpiral && (
+              <p>Select a polygon, star, chaos or spiral object.</p>
+            )}
           </div>
         )}
 
