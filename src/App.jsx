@@ -20,6 +20,7 @@ import FontManager from './components/FontManager'
 import ColorLibrary from './components/ColorLibrary'
 import VectorizeDialog from './components/VectorizeDialog'
 import { AppProvider, useApp } from './context/AppContext'
+import { printDocument } from './platform'
 import './App.css'
 
 const tools = [
@@ -107,7 +108,7 @@ function AppContent() {
 
   const handleSave = useCallback(() => actions.saveDocument(), [actions])
   const handleExport = useCallback(() => setDialog({ type: 'export' }), [])
-  const handlePrint = useCallback(() => window.print(), [])
+  const handlePrint = useCallback(() => { printDocument() }, [])
   const handleCut = useCallback(() => dispatch({ type: 'CUT_SELECTED' }), [dispatch])
   const handleCopy = useCallback(() => dispatch({ type: 'COPY_SELECTED' }), [dispatch])
   const handlePaste = useCallback(() => dispatch({ type: 'PASTE' }), [dispatch])

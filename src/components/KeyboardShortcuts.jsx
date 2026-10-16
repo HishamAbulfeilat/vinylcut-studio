@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useApp } from '../context/AppContext'
+import { printDocument } from '../platform'
 
 export default function KeyboardShortcuts() {
   const { state, dispatch, actions } = useApp()
@@ -18,7 +19,7 @@ export default function KeyboardShortcuts() {
       if (ctrl && key === 'o') { e.preventDefault(); actions.loadFile() }
       if (ctrl && key === 's') { e.preventDefault(); actions.saveDocument() }
       if (ctrl && shift && key === 's') { e.preventDefault(); actions.saveDocument() }
-      if (ctrl && key === 'p') { e.preventDefault(); window.print() }
+      if (ctrl && key === 'p') { e.preventDefault(); printDocument() }
       if (ctrl && key === 'i') { e.preventDefault(); actions.loadFile() }
       if (ctrl && key === 'e') { e.preventDefault(); actions.exportDocument() }
 

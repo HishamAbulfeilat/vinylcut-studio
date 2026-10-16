@@ -8,10 +8,25 @@
 // perform it. Callers are expected to check `capabilities.*` and degrade
 // honestly rather than silently doing nothing.
 
+import { createWebBackend } from './web'
+import { createDesktopBackend } from './desktop'
+
+/**
+ * Pick the backend for a window-like object. The Electron preload exposes
+ * `window.vcsDesktop` (isDesktop: true); its presence selects desktop.
+ */
+export function selectBackend(win = typeof window !== 'undefined' ? window : undefined) {
+  const bridge = win && win.vcsDesktop
+  if (bridge && bridge.isDesktop) return createDesktopBackend(bridge)
+  return createWebBackend(win)
+}
+
 const desktop = typeof window !== 'undefined' ? window.vcsDesktop : undefined
 
 export const isDesktop = !!desktop?.isDesktop
 export const host = isDesktop ? 'desktop' : 'web'
+
+export const backend = selectBackend()
 
 const hasSerial = typeof navigator !== 'undefined' && 'serial' in navigator
 
@@ -37,115 +52,26 @@ export async function appInfo() {
   return { platform: 'web', userAgent: navigator.userAgent }
 }
 
-// --- file open --------------------------------------------------------------
-//
-// Returns real `File` objects on both hosts, so callers that already speak File
-// keep working unchanged.
-
-const MIME_FALLBACK = 'application/octet-stream'
-
-function base64ToBlob(base64, type) {
-  const bin = atob(base64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  return new Blob([bytes], { type })
-}
+// --- file open / save -------------------------------------------------------
 
 /**
- * Open one or more files.
+ * Open one or more files; returns real `File` objects on both hosts.
  * @param {{ accept?: string, multiple?: boolean, title?: string }} opts
  * @returns {Promise<File[]>}
  */
-export async function openFiles(opts = {}) {
-  const accept = opts.accept || '*'
-  const multiple = !!opts.multiple
-
-  if (isDesktop) {
-    const filters = acceptToFilters(accept)
-    const res = await desktop.openDialog({ title: opts.title, filters, multiple })
-    if (res.canceled || !res.paths?.length) return []
-    const files = []
-    for (const p of res.paths) {
-      const r = await desktop.readFile(p)
-      files.push(new File([base64ToBlob(r.data, MIME_FALLBACK)], r.name))
-    }
-    return files
-  }
-
-  return new Promise((resolve) => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = accept
-    input.multiple = multiple
-    input.style.display = 'none'
-    input.addEventListener('change', () => {
-      const files = Array.from(input.files || [])
-      input.remove()
-      resolve(files)
-    })
-    input.addEventListener('cancel', () => { input.remove(); resolve([]) })
-    document.body.appendChild(input)
-    input.click()
-  })
-}
-
-function acceptToFilters(accept) {
-  const exts = accept
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean)
-    .map(s => (s.startsWith('.') ? s.slice(1) : s))
-    .filter(s => /^[a-z0-9]+$/i.test(s))
-  if (!exts.length) return [{ name: 'All Files', extensions: ['*'] }]
-  return [
-    { name: 'Supported Files', extensions: exts },
-    { name: 'All Files', extensions: ['*'] },
-  ]
-}
-
-// --- file save --------------------------------------------------------------
+export const openFiles = (opts = {}) => backend.openFiles(opts)
 
 /**
- * Save bytes to disk.
- * Desktop: native save dialog + real filesystem write.
- * Web: browser download (there is no filesystem to write to).
- * @param {{ suggestedName: string, mime?: string, data: Blob }} opts
+ * Save bytes. Desktop: native save dialog + filesystem write. Web: File System
+ * Access save picker when available, otherwise a browser download.
+ * @param {{ suggestedName: string, mime?: string, data: Blob | string | Uint8Array }} opts
  * @returns {Promise<{ saved: boolean, path?: string }>}
  */
-export async function saveFile(opts) {
-  const { suggestedName, mime = MIME_FALLBACK, data } = opts
+export const saveFile = (opts) => backend.saveFile(opts)
 
-  if (isDesktop) {
-    const res = await desktop.saveDialog({
-      title: 'Save As',
-      defaultPath: suggestedName,
-    })
-    if (res.canceled || !res.path) return { saved: false }
-    const buf = await data.arrayBuffer()
-    const base64 = bytesToBase64(new Uint8Array(buf))
-    await desktop.writeFile(res.path, base64)
-    return { saved: true, path: res.path }
-  }
+// --- cutter output ----------------------------------------------------------
 
-  const url = URL.createObjectURL(new Blob([data], { type: mime }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = suggestedName
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-  return { saved: true }
-}
-
-function bytesToBase64(bytes) {
-  let bin = ''
-  const chunk = 0x8000
-  for (let i = 0; i < bytes.length; i += chunk) {
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk))
-  }
-  return btoa(bin)
-}
+export const cutter = backend.cutter
 
 // --- printing ---------------------------------------------------------------
 
@@ -154,11 +80,7 @@ export async function listPrinters() {
   return desktop.print.listPrinters()
 }
 
-export async function printDocument(opts = {}) {
-  if (isDesktop) return desktop.print.document(opts)
-  window.print()
-  return { ok: true, via: 'browser' }
-}
+export const printDocument = (opts = {}) => backend.printDocument(opts)
 
 export async function printToPdf(opts = {}) {
   if (!isDesktop) {

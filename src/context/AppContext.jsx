@@ -10,13 +10,12 @@ import {
   splitByLine,
   simplify,
   parsePathData,
-  union,
-  difference,
-  intersection,
 } from '../lib/geometry'
+import { weld, punchOut, trim, cookieCut } from '../lib/shapeops'
 import { buildSvg, buildPdf, buildPostScript, buildDxf, buildHpgl, rasterise, download, vectorObjects, encodeBmp } from '../lib/exporters'
 import { prepareImageAssets, traceAssetToShape } from '../lib/rasterprep'
-import { CUTTER_PROFILES, profileById, buildCutterJob, connectCutter, closeCutter, writeJob, queryStatus, serialSupported } from '../lib/cutter'
+import { CUTTER_PROFILES, profileById, buildCutterJob, queryStatus } from '../lib/cutter'
+import { openFiles, saveFile, cutter } from '../platform'
 import { importFile, loadImageElement } from '../lib/importers'
 import { vectorizeImage } from '../lib/tracer'
 
@@ -112,6 +111,21 @@ function mergeObjects(state, patch) {
 }
 
 // Merge an effect patch into every selected object, in place.
+function applyShapeOp(state, op) {
+  const res = op(state.objects, state.selectedObjects, {
+    generateId,
+    currentFill: state.currentFill,
+    currentStroke: state.currentStroke,
+  })
+  if (!res) return state
+  return {
+    ...state,
+    objects: res.objects,
+    selectedObjects: res.selectedIds,
+    selectedObject: res.objects.find(o => o.id === res.selectedIds[0]),
+  }
+}
+
 function mergeEffect(state, patch) {
   const ids = (state.selectedObjects && state.selectedObjects.length)
     ? state.selectedObjects
@@ -680,112 +694,17 @@ function appReducer(state, action) {
     case 'APPLY_EFFECT':
       return mergeEffect(state, action.payload)
 
-    case 'APPLY_WELD': {
-      const weldObjs = state.objects.filter(o => state.selectedObjects.includes(o.id))
-      if (weldObjs.length < 2) return state
-      try {
-        const geoms = weldObjs.map(objectToMultiPolygon)
-        const shape = multiPolygonToShape(union(geoms[0], ...geoms.slice(1)))
-        if (!shape) return state
-        const welded = {
-          id: generateId(),
-          type: 'path',
-          ...shape,
-          fill: { ...(weldObjs[0].fill || state.currentFill) },
-          stroke: { ...(weldObjs[0].stroke || state.currentStroke) },
-          opacity: weldObjs[0].opacity || 100,
-        }
-        const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
-        newObjects.push(welded)
-        return { ...state, objects: newObjects, selectedObjects: [welded.id], selectedObject: welded }
-      } catch (e) {
-        return state
-      }
-    }
+    case 'APPLY_WELD':
+      return applyShapeOp(state, weld)
 
-    case 'APPLY_PUNCH_OUT': {
-      // Z-order: the topmost selected object is the "punch"; it is subtracted
-      // from the union of everything selected underneath it.
-      const punchObjs = state.objects.filter(o => state.selectedObjects.includes(o.id))
-      if (punchObjs.length < 2) return state
-      const punchFront = punchObjs[punchObjs.length - 1]
-      const punchBehind = punchObjs.slice(0, -1)
-      try {
-        let base = objectToMultiPolygon(punchBehind[0])
-        for (const o of punchBehind.slice(1)) base = union(base, objectToMultiPolygon(o))
-        const shape = multiPolygonToShape(difference(base, objectToMultiPolygon(punchFront)))
-        if (!shape) return state
-        const punched = {
-          id: generateId(),
-          type: 'path',
-          ...shape,
-          fill: { ...(punchBehind[0].fill || state.currentFill) },
-          stroke: { ...(punchBehind[0].stroke || state.currentStroke) },
-          opacity: punchBehind[0].opacity || 100,
-        }
-        const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
-        newObjects.push(punched)
-        return { ...state, objects: newObjects, selectedObjects: [punched.id], selectedObject: punched }
-      } catch (e) {
-        return state
-      }
-    }
+    case 'APPLY_PUNCH_OUT':
+      return applyShapeOp(state, punchOut)
 
-    case 'APPLY_TRIM': {
-      // Subtract the topmost object from each of the others, keeping every
-      // remaining piece as its own object (this is what "Trim" does).
-      const trimObjs = state.objects.filter(o => state.selectedObjects.includes(o.id))
-      if (trimObjs.length < 2) return state
-      const trimFront = trimObjs[trimObjs.length - 1]
-      const trimRest = trimObjs.slice(0, -1)
-      try {
-        const frontGeo = objectToMultiPolygon(trimFront)
-        const pieces = []
-        for (const o of trimRest) {
-          const shape = multiPolygonToShape(difference(objectToMultiPolygon(o), frontGeo))
-          if (!shape) continue
-          pieces.push({
-            id: generateId(),
-            type: 'path',
-            ...shape,
-            fill: { ...(o.fill || state.currentFill) },
-            stroke: { ...(o.stroke || state.currentStroke) },
-            opacity: o.opacity || 100,
-          })
-        }
-        if (!pieces.length) return state
-        const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
-        newObjects.push(...pieces)
-        return { ...state, objects: newObjects, selectedObjects: pieces.map(o => o.id), selectedObject: pieces[0] }
-      } catch (e) {
-        return state
-      }
-    }
+    case 'APPLY_TRIM':
+      return applyShapeOp(state, trim)
 
-    case 'APPLY_COOKIE_CUT': {
-      // Keep only the area common to every selected object.
-      const cookieObjs = state.objects.filter(o => state.selectedObjects.includes(o.id))
-      if (cookieObjs.length < 2) return state
-      try {
-        let acc = objectToMultiPolygon(cookieObjs[0])
-        for (const o of cookieObjs.slice(1)) acc = intersection(acc, objectToMultiPolygon(o))
-        const shape = multiPolygonToShape(acc)
-        if (!shape) return state
-        const common = {
-          id: generateId(),
-          type: 'path',
-          ...shape,
-          fill: { ...(cookieObjs[0].fill || state.currentFill) },
-          stroke: { ...(cookieObjs[0].stroke || state.currentStroke) },
-          opacity: cookieObjs[0].opacity || 100,
-        }
-        const newObjects = state.objects.filter(o => !state.selectedObjects.includes(o.id))
-        newObjects.push(common)
-        return { ...state, objects: newObjects, selectedObjects: [common.id], selectedObject: common }
-      } catch (e) {
-        return state
-      }
-    }
+    case 'APPLY_COOKIE_CUT':
+      return applyShapeOp(state, cookieCut)
 
     case 'APPLY_OUTLINE':
       return mergeEffect(state, {
@@ -1404,35 +1323,14 @@ export function AppProvider({ children }) {
     reader.readAsText(file)
   }, [])
 
-  const openDocumentPicker = useCallback(() => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.id = 'vcs-open-input'
-    input.accept = '.json,.vcs'
-    input.style.display = 'none'
-    input.onchange = (e) => {
-      const f = e.target.files && e.target.files[0]
-      if (f) readDocumentFile(f)
-      input.remove()
-    }
-    document.body.appendChild(input)
-    input.click()
+  const openDocumentPicker = useCallback(async () => {
+    const [f] = await openFiles({ accept: '.json,.vcs' })
+    if (f) readDocumentFile(f)
   }, [readDocumentFile])
 
-  const openImportPicker = useCallback(() => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.id = 'vcs-import-input'
-    input.accept = '.svg,.pdf,.ai,.eps,.ps,.dxf,.plt,.hpgl,.hgl,.png,.jpg,.jpeg,.gif,.bmp,.webp,.avif,.json,.vcs'
-    input.style.display = 'none'
-    input.onchange = async (e) => {
-      const f = e.target.files && e.target.files[0]
-      input.remove()
-      if (!f) return
-      await importAnyFile(f)
-    }
-    document.body.appendChild(input)
-    input.click()
+  const openImportPicker = useCallback(async () => {
+    const [f] = await openFiles({ accept: '.svg,.pdf,.ai,.eps,.ps,.dxf,.plt,.hpgl,.hgl,.png,.jpg,.jpeg,.gif,.bmp,.webp,.avif,.json,.vcs' })
+    if (f) await importAnyFile(f)
   }, [])
 
   const serialiseDocument = useCallback(() => {
@@ -1517,7 +1415,7 @@ export function AppProvider({ children }) {
         : {}
 
       if (f === 'svg') {
-        download(svg, `${base}.svg`, 'image/svg+xml')
+        await saveFile({ suggestedName: `${base}.svg`, mime: 'image/svg+xml', data: svg })
       } else if (f === 'png' || f === 'jpg' || f === 'jpeg') {
         const mime = f === 'png' ? 'image/png' : 'image/jpeg'
         const url = await rasterise(svg, px(page.width), px(page.height), mime, 0.95)
@@ -1532,17 +1430,17 @@ export function AppProvider({ children }) {
         ctx.drawImage(img, 0, 0)
         const data = ctx.getImageData(0, 0, canvas.width, canvas.height)
         const bmp = encodeBmp(data)
-        download(new Blob([bmp], { type: 'image/bmp' }), `${base}.bmp`)
+        await saveFile({ suggestedName: `${base}.bmp`, mime: 'image/bmp', data: new Blob([bmp], { type: 'image/bmp' }) })
       } else if (f === 'pdf') {
-        download(buildPdf(objects, page, { images }), `${base}.pdf`, 'application/pdf')
+        await saveFile({ suggestedName: `${base}.pdf`, mime: 'application/pdf', data: buildPdf(objects, page, { images }) })
       } else if (f === 'eps' || f === 'ps') {
-        download(buildPostScript(objects, page, { images, traced }), `${base}.eps`, 'application/postscript')
+        await saveFile({ suggestedName: `${base}.eps`, mime: 'application/postscript', data: buildPostScript(objects, page, { images, traced }) })
       } else if (f === 'ai') {
-        download(buildPostScript(objects, page, { images, traced }), `${base}.ai`, 'application/postscript')
+        await saveFile({ suggestedName: `${base}.ai`, mime: 'application/postscript', data: buildPostScript(objects, page, { images, traced }) })
       } else if (f === 'dxf') {
-        download(buildDxf(objects, { traced, pageHeight: page.height }), `${base}.dxf`, 'application/dxf')
+        await saveFile({ suggestedName: `${base}.dxf`, mime: 'application/dxf', data: buildDxf(objects, { traced, pageHeight: page.height }) })
       } else if (f === 'plt' || f === 'hpgl') {
-        download(buildHpgl(objects, { ...options, traced, pageHeight: page.height }), `${base}.plt`, 'application/vnd.hp-hpgl')
+        await saveFile({ suggestedName: `${base}.plt`, mime: 'application/vnd.hp-hpgl', data: buildHpgl(objects, { ...options, traced, pageHeight: page.height }) })
       } else {
         notify(`Export format .${f} is not supported`, 'error')
         return null
@@ -1606,41 +1504,41 @@ export function AppProvider({ children }) {
     const page = s.pages[s.activePage] || { width: 210, height: 297 }
     const profile = profileById(options.cutterModel || options.profile || 'hpgl')
     const job = buildCutterJob(objects, page, profile, options)
-    const saveFallback = () => {
-      download(job, `${(s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')}.plt`, 'application/vnd.hp-hpgl')
+    const saveFallback = async () => {
+      await saveFile({ suggestedName: `${(s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')}.plt`, mime: 'application/vnd.hp-hpgl', data: job })
       notify('Saved cutter file (.plt) - load it from your cutter software', 'ok')
     }
 
-    if (!serialSupported() || options.downloadOnly) {
-      saveFallback()
+    if (!cutter.available() || options.downloadOnly) {
+      await saveFallback()
       return 'download'
     }
     let port = null
     try {
-      port = await connectCutter(profile)
-    } catch {
-      saveFallback()
-      notify('Serial connection cancelled - saved the cutter file instead', 'warn')
+      port = await cutter.connect(profile)
+    } catch (err) {
+      await saveFallback()
+      notify(`${err && err.message ? err.message : 'Serial connection cancelled'} - saved the cutter file instead`, 'warn')
       return 'download'
     }
     try {
-      if (profile.statusQuery) {
-        const status = await queryStatus(port, profile, 800)
+      if (profile.statusQuery && port.port) {
+        const status = await queryStatus(port.port, profile, 800)
         if (status) notify(`${profile.name}: ${status.slice(0, 60)}`, 'info')
       }
-      const written = await writeJob(port, job, { onProgress: options.onProgress })
+      const written = await cutter.write(port, job, { onProgress: options.onProgress })
       notify(`Sent ${written} bytes to ${profile.name}`, 'ok')
       return 'serial'
     } catch (err) {
-      saveFallback()
+      await saveFallback()
       notify(err && err.message ? err.message : 'Serial send failed', 'error')
       return 'download'
     } finally {
-      await closeCutter(port)
+      await cutter.close(port)
     }
   }, [notify])
 
-  const serialSupportedFlag = serialSupported()
+  const serialSupportedFlag = cutter.available()
 
   const actions = {
     newDocument: useCallback(() => dispatch({ type: 'NEW_DOCUMENT' }), []),
@@ -1655,18 +1553,14 @@ export function AppProvider({ children }) {
     sendToCutter,
     serialSupported: serialSupportedFlag,
     notify,
-    saveDocument: useCallback(() => {
+    saveDocument: useCallback(async () => {
       const s = stateRef.current
-      const blob = new Blob([serialiseDocument()], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${(s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')}.vcs.json`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      dispatch({ type: 'SAVE_DOCUMENT' })
+      const res = await saveFile({
+        suggestedName: `${(s.documentName || 'Untitled-1').replace(/\.[^.]*$/, '')}.vcs.json`,
+        mime: 'application/json',
+        data: serialiseDocument(),
+      })
+      if (res.saved) dispatch({ type: 'SAVE_DOCUMENT' })
     }, [serialiseDocument]),
     exportDocument: useCallback(() => dispatch({ type: 'EXPORT_DOCUMENT' }), []),
     setTool: useCallback((toolId) => dispatch({ type: 'SET_TOOL', payload: { toolId } }), []),
