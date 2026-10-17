@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useLayoutEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { useApp } from '../context/AppContext'
 import { parsePathData, objectToSegments, subpathsBounds } from '../lib/geometry'
+import { rulerTicks } from '../lib/rulers'
 import { polygonPoints, starPoints, chaosStarPoints, archimedeanSpiralPoints } from '../lib/powershapes'
 import { warpSubpaths } from '../lib/warp'
 import RasterWarp from './RasterWarp'
@@ -1176,16 +1177,16 @@ const Canvas = forwardRef((props, ref) => {
       {state.showRulers && (
         <>
           <div className="ruler ruler-horizontal">
-            {Array.from({ length: 100 }, (_, i) => (
-              <div key={i} className="ruler-tick" style={{ left: pageOrigin.x - 20 + i * 50 * state.zoom }}>
-                <span className="ruler-label">{i * 50}</span>
+            {rulerTicks({ zoom: state.zoom, pageOrigin: pageOrigin.x }).map((tick, i) => (
+              <div key={i} className="ruler-tick" style={{ left: tick.pos }}>
+                <span className="ruler-label">{tick.label}</span>
               </div>
             ))}
           </div>
           <div className="ruler ruler-vertical">
-            {Array.from({ length: 100 }, (_, i) => (
-              <div key={i} className="ruler-tick" style={{ top: pageOrigin.y - 20 + i * 50 * state.zoom }}>
-                <span className="ruler-label">{i * 50}</span>
+            {rulerTicks({ zoom: state.zoom, pageOrigin: pageOrigin.y }).map((tick, i) => (
+              <div key={i} className="ruler-tick" style={{ top: tick.pos }}>
+                <span className="ruler-label">{tick.label}</span>
               </div>
             ))}
           </div>
