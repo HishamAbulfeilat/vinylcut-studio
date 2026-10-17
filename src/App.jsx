@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react'
 import MenuBar from './components/MenuBar'
 import Toolbar from './components/Toolbar'
-import Canvas from './components/Canvas'
+import DesignCenter from './components/DesignCenter'
 import PropertyPanel from './components/PropertyPanel'
 import StatusBar from './components/StatusBar'
 import TabBar from './components/TabBar'
@@ -198,7 +198,7 @@ function AppContent() {
         activeTab={state.activeTab}
       />
       <div className="main-workspace">
-        <Canvas ref={canvasRef} />
+        <DesignCenter canvasRef={canvasRef} />
         <PropertyPanel
           selectedObject={state.selectedObject}
           onPropertyChange={handlePropertyChange}
