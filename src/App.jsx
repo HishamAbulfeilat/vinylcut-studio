@@ -244,6 +244,9 @@ function AppContent() {
   )
 }
 
+export { tools as TOOLS }
+export const TOOLS_LIST = tools
+
 export default function App() {
   return (
     <AppProvider>
