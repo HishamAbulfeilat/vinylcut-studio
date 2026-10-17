@@ -83,7 +83,9 @@ function createWindow() {
   if (isDev) {
     mainWindow.loadURL(DEV_URL)
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
+    // Resolve the built bundle relative to the app root so the same code works in
+    // development (project root) and in a packaged build (app.asar / resources).
+    mainWindow.loadFile(path.join(app.getAppPath(), 'dist', 'index.html'))
   }
 
   // External links open in the real browser, never inside the app window.

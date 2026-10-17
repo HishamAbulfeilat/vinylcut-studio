@@ -1,5 +1,7 @@
 {
   "name": "vinylcut-studio",
+  "description": "An original, open-source sign-making and vinyl cutting web and desktop app",
+  "author": "VinylCut Studio contributors",
   "private": true,
   "version": "1.0.0",
   "license": "MIT",
@@ -12,7 +14,36 @@
     "desktop": "electron .",
     "desktop:dev": "electron . --dev",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dist": "npm run build && electron-builder",
+    "dist:dir": "npm run build && electron-builder --dir",
+    "pack": "npm run build && electron-builder --dir",
+    "package": "npm run build && electron-builder",
+    "build:desktop": "npm run build && electron-builder",
+    "build:electron": "npm run build && electron-builder"
+  },
+  "build": {
+    "appId": "com.vinylcutstudio.app",
+    "productName": "VinylCut Studio",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": ["nsis"]
+    },
+    "mac": {
+      "target": ["dmg"]
+    },
+    "linux": {
+      "target": ["AppImage"]
+    }
   },
   "dependencies": {
     "polygon-clipping": "^0.15.7",
@@ -22,6 +53,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
     "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
     "vite": "^5.0.8",
     "vitest": "^2.1.9"
   }
